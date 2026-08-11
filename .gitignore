@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# API 키가 들어 있으므로 .env는 git에 올리지 않습니다.
+.env
+./.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
