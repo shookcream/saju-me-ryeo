@@ -157,7 +157,7 @@ function App() {
       <section className="sheet">
         <header className="sheet-header">
           <p className="sheet-eyebrow">四柱</p>
-          <h1>사주미 麗</h1>
+          <h1>사주미麗</h1>
           <p className="sheet-lead">생년월일을 적으면 명식을 풀어 드립니다</p>
         </header>
 
