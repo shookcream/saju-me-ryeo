@@ -1,26 +1,16 @@
-# saju-me-ryeo
+# React + Vite
 
-생년월일시를 바탕으로 사주 명식을 살펴보는 웹 서비스입니다.
+This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
-## 소개
+Currently, two official plugins are available:
 
-사용자의 출생 정보를 입력받아 사주팔자를 계산·정리하고, 결과를 웹에서 쉽게 확인할 수 있도록 만드는 프로젝트입니다.
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
 
-## 주요 기능 (예정)
+## React Compiler
 
-- 생년월일시·성별 기반 사주 명식 계산
-- 사주팔자·오행 등 핵심 정보 시각화
-- 모바일·데스크톱 대응 웹 UI
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
-## 시작하기
+## Expanding the Oxlint configuration
 
-프로젝트 설정과 실행 방법은 개발이 진행되면 이곳에 추가됩니다.
-
-```bash
-git clone https://github.com/shookcream/saju-me-ryeo.git
-cd saju-me-ryeo
-```
-
-## 라이선스
-
-아직 정해지지 않았습니다.
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
