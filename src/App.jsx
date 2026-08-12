@@ -65,12 +65,20 @@ function App() {
   const [isEditing, setIsEditing] = useState(false) // 저장본 입력값만 수정 중인지
   const [isReinterpreting, setIsReinterpreting] = useState(false) // 저장본을 다시 해석해 덮어쓸지
   const [isSaving, setIsSaving] = useState(false) // 수정/삭제 요청 중인지
+  const [user, setUser] = useState(null) // 구글 로그인된 Supabase 사용자
+  const [authLoading, setAuthLoading] = useState(true) // 세션 확인 중
+  const [authBusy, setAuthBusy] = useState(false) // 로그인/로그아웃 진행 중
 
   // 저장본을 그냥 보고 있을 때만 입력칸을 잠급니다.
   const isViewingSaved = Boolean(selectedId) && !isEditing && !isReinterpreting && !isLoading && !isTyping
   const isFormComplete = Boolean(name && birthDate && birthTime && gender && calendarType)
-  const isBusy = isLoading || isTyping || isSaving
+  const isBusy = isLoading || isTyping || isSaving || authBusy
   const formLocked = isViewingSaved || isBusy
+  const userLabel = user?.user_metadata?.full_name
+    || user?.user_metadata?.name
+    || user?.email
+    || '사용자'
+  const userAvatar = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || ''
   const submitLabel = isLoading
     ? '해석 중...'
     : isTyping
@@ -79,7 +87,31 @@ function App() {
         ? '다시 해석하고 저장'
         : '사주 해석하기'
 
-  // 저장된 사주 목록을 Supabase에서 불러옵니다.
+  // 구글 로그인 세션을 확인하고, 이후 변화를 계속 듣습니다.
+  useEffect(() => {
+    let isMounted = true
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!isMounted) return
+      if (error) {
+        setErrorMessage(`로그인 상태를 확인하지 못했습니다: ${error.message}`)
+      }
+      setUser(data.session?.user ?? null)
+      setAuthLoading(false)
+    })
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+      setAuthLoading(false)
+    })
+
+    return () => {
+      isMounted = false
+      authListener.subscription.unsubscribe()
+    }
+  }, [])
+
+  // 저장된 사주 목록을 Supabase에서 불러옵니다. (로그인한 사용자 것만 RLS로 걸러집니다)
   async function loadReadings() {
     setIsHistoryLoading(true)
     const { data, error } = await supabase
@@ -98,8 +130,16 @@ function App() {
   }
 
   useEffect(() => {
+    if (authLoading) return
+
+    if (!user) {
+      setReadings([])
+      setIsHistoryLoading(false)
+      return
+    }
+
     loadReadings()
-  }, [])
+  }, [user, authLoading])
 
   // 저장 완료 안내는 잠시 뒤 자동으로 사라집니다.
   useEffect(() => {
@@ -259,6 +299,41 @@ function App() {
     })
   }
 
+  // Google OAuth로 로그인합니다. Supabase 대시보드에 등록된 redirect URL로 돌아옵니다.
+  async function handleGoogleLogin() {
+    setAuthBusy(true)
+    setErrorMessage('')
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+      },
+    })
+
+    if (error) {
+      setAuthBusy(false)
+      setErrorMessage(`구글 로그인에 실패했습니다: ${error.message}`)
+    }
+  }
+
+  // 로그아웃하고 화면을 초기화합니다.
+  async function handleLogout() {
+    setAuthBusy(true)
+    setErrorMessage('')
+
+    const { error } = await supabase.auth.signOut()
+    setAuthBusy(false)
+
+    if (error) {
+      setErrorMessage(`로그아웃에 실패했습니다: ${error.message}`)
+      return
+    }
+
+    handleNewSaju()
+    setStatusMessage('로그아웃되었습니다')
+  }
+
   // 저장본 입력값을 수정할 수 있게 잠금을 풉니다. (Update)
   function handleStartEdit() {
     setIsEditing(true)
@@ -309,9 +384,15 @@ function App() {
 
   // Create: 새 사주 기록을 추가합니다.
   async function createReading(outputText) {
+    if (!user?.id) {
+      setErrorMessage('로그인이 필요합니다. 구글로 로그인해 주세요.')
+      return null
+    }
+
     const { data, error } = await supabase
       .from('saju_readings')
       .insert({
+        user_id: user.id,
         name,
         birth_date: birthDate,
         birth_time: birthTime,
@@ -549,9 +630,68 @@ function App() {
     handleAskSaju()
   }
 
+  if (authLoading) {
+    return (
+      <main className="page page-auth">
+        <section className="sheet auth-sheet">
+          <p className="sheet-eyebrow">四柱</p>
+          <h1>사주미麗</h1>
+          <p className="sheet-lead">로그인 상태를 확인하는 중...</p>
+        </section>
+      </main>
+    )
+  }
+
+  if (!user) {
+    return (
+      <main className="page page-auth">
+        <section className="sheet auth-sheet">
+          <header className="sheet-header">
+            <p className="sheet-eyebrow">四柱</p>
+            <h1>사주미麗</h1>
+            <p className="sheet-lead">구글 계정으로 로그인하면 사주를 저장하고 다시 볼 수 있습니다</p>
+          </header>
+          <button
+            type="button"
+            className="google-login"
+            onClick={handleGoogleLogin}
+            disabled={authBusy}
+          >
+            {authBusy ? '구글로 이동 중...' : 'Google로 계속하기'}
+          </button>
+          {errorMessage && <p className="error">{errorMessage}</p>}
+        </section>
+      </main>
+    )
+  }
+
   return (
     <main className="page">
       <aside className="history-sidebar" aria-label="저장된 사주 목록">
+        <div className="auth-card">
+          <div className="auth-user">
+            {userAvatar ? (
+              <img className="auth-avatar" src={userAvatar} alt="" referrerPolicy="no-referrer" />
+            ) : (
+              <span className="auth-avatar auth-avatar-fallback" aria-hidden="true">
+                {userLabel.slice(0, 1)}
+              </span>
+            )}
+            <div className="auth-user-text">
+              <p className="auth-user-label">로그인</p>
+              <p className="auth-user-name">{userLabel}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="auth-logout"
+            onClick={handleLogout}
+            disabled={authBusy}
+          >
+            로그아웃
+          </button>
+        </div>
+
         <p className="history-eyebrow">記錄</p>
         <div className="history-heading-row">
           <h2 className="history-title">저장된 사주</h2>

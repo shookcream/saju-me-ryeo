@@ -7,6 +7,107 @@
   padding: 48px 16px 72px;
 }
 
+.page-auth {
+  align-items: center;
+}
+
+.auth-sheet {
+  width: min(420px, 100%);
+}
+
+.google-login {
+  width: 100%;
+  height: 50px;
+  border: 1px solid #2a241c;
+  background-color: #fbf7ef;
+  color: #2a241c;
+  font-family: 'Noto Serif KR', serif;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.google-login:hover:not(:disabled) {
+  background-color: #2a241c;
+  color: #f7f1e6;
+}
+
+.google-login:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.auth-card {
+  margin: 0 0 20px;
+  padding: 12px;
+  border: 1px solid #c9bda8;
+  background-color: #f3ebe0;
+}
+
+.auth-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.auth-avatar {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #b7ab98;
+  object-fit: cover;
+  background-color: #fbf7ef;
+}
+
+.auth-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #2a241c;
+  font-family: 'Noto Serif KR', serif;
+  font-size: 14px;
+}
+
+.auth-user-text {
+  min-width: 0;
+}
+
+.auth-user-label {
+  margin: 0;
+  color: #6b6256;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.auth-user-name {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: #2a241c;
+  font-family: 'Noto Serif KR', serif;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-logout {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #8a7d6b;
+  background-color: #fbf7ef;
+  color: #3d362c;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.auth-logout:hover:not(:disabled) {
+  border-color: #2a241c;
+  color: #2a241c;
+}
+
+.auth-logout:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .history-sidebar {
   position: sticky;
   top: 48px;
