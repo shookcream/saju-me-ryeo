@@ -62,11 +62,22 @@ function App() {
   const [revealMode, setRevealMode] = useState('type') // type: 타이핑 / instant: 저장본 바로 표시
   const [isHistoryLoading, setIsHistoryLoading] = useState(true) // 목록 첫 로딩
   const [showFieldErrors, setShowFieldErrors] = useState(false) // 빈 칸 강조 표시
+  const [isEditing, setIsEditing] = useState(false) // 저장본 입력값만 수정 중인지
+  const [isReinterpreting, setIsReinterpreting] = useState(false) // 저장본을 다시 해석해 덮어쓸지
+  const [isSaving, setIsSaving] = useState(false) // 수정/삭제 요청 중인지
 
-  // 저장본을 보거나, 방금 저장된 결과가 끝난 뒤에는 입력칸을 잠급니다.
-  const isViewingSaved = Boolean(selectedId) && !isLoading && !isTyping
+  // 저장본을 그냥 보고 있을 때만 입력칸을 잠급니다.
+  const isViewingSaved = Boolean(selectedId) && !isEditing && !isReinterpreting && !isLoading && !isTyping
   const isFormComplete = Boolean(name && birthDate && birthTime && gender && calendarType)
-  const isBusy = isLoading || isTyping
+  const isBusy = isLoading || isTyping || isSaving
+  const formLocked = isViewingSaved || isBusy
+  const submitLabel = isLoading
+    ? '해석 중...'
+    : isTyping
+      ? '작성 중...'
+      : isReinterpreting
+        ? '다시 해석하고 저장'
+        : '사주 해석하기'
 
   // 저장된 사주 목록을 Supabase에서 불러옵니다.
   async function loadReadings() {
@@ -208,6 +219,8 @@ function App() {
     setStatusMessage('')
     setShowFieldErrors(false)
     setIsLoading(false)
+    setIsEditing(false)
+    setIsReinterpreting(false)
     setRevealMode('instant')
     setResult(savedResult)
     setDisplayedResult(savedResult)
@@ -234,6 +247,8 @@ function App() {
     setDisplayedResult('')
     setIsTyping(false)
     setIsLoading(false)
+    setIsEditing(false)
+    setIsReinterpreting(false)
     setErrorMessage('')
     setStatusMessage('')
     setShowFieldErrors(false)
@@ -244,9 +259,33 @@ function App() {
     })
   }
 
-  // 저장본 내용을 유지한 채 다시 해석할 수 있게 입력 잠금을 풉니다.
+  // 저장본 입력값을 수정할 수 있게 잠금을 풉니다. (Update)
+  function handleStartEdit() {
+    setIsEditing(true)
+    setIsReinterpreting(false)
+    setErrorMessage('')
+    setStatusMessage('')
+    setShowFieldErrors(false)
+
+    requestAnimationFrame(() => {
+      document.getElementById('name')?.focus()
+    })
+  }
+
+  // 수정 모드를 취소하고 원래 저장본으로 되돌립니다.
+  function handleCancelEdit() {
+    const current = readings.find((item) => item.id === selectedId)
+    if (!current) {
+      setIsEditing(false)
+      return
+    }
+    handleSelectReading(current)
+  }
+
+  // 저장본 내용을 유지한 채 다시 해석해 같은 기록을 덮어쓸 준비를 합니다. (Update)
   function handleReinterpret() {
-    setSelectedId(null)
+    setIsEditing(false)
+    setIsReinterpreting(true)
     setResult('')
     setDisplayedResult('')
     setIsTyping(false)
@@ -268,8 +307,8 @@ function App() {
     setIsTyping(false)
   }
 
-  // 입력값과 사주 결과를 한 줄로 묶어 Supabase에 저장합니다.
-  async function saveReading(outputText) {
+  // Create: 새 사주 기록을 추가합니다.
+  async function createReading(outputText) {
     const { data, error } = await supabase
       .from('saju_readings')
       .insert({
@@ -285,12 +324,118 @@ function App() {
 
     if (error) {
       setErrorMessage(`사주 결과 저장에 실패했습니다: ${error.message}`)
-      return
+      return null
     }
 
     setReadings((prev) => [data, ...prev])
     setSelectedId(data.id)
+    setIsEditing(false)
+    setIsReinterpreting(false)
     setStatusMessage('사주가 저장되었습니다')
+    return data
+  }
+
+  // Update: 다시 해석한 결과로 기존 기록을 덮어씁니다.
+  async function updateReadingResult(outputText, targetId) {
+    const { data, error } = await supabase
+      .from('saju_readings')
+      .update({
+        name,
+        birth_date: birthDate,
+        birth_time: birthTime,
+        gender,
+        calendar_type: calendarType,
+        result: outputText,
+      })
+      .eq('id', targetId)
+      .select('id, name, birth_date, birth_time, gender, calendar_type, result, created_at')
+      .single()
+
+    if (error) {
+      setErrorMessage(`사주 결과 수정에 실패했습니다: ${error.message}`)
+      return null
+    }
+
+    setReadings((prev) => prev.map((item) => (item.id === data.id ? data : item)))
+    setSelectedId(data.id)
+    setIsEditing(false)
+    setIsReinterpreting(false)
+    setStatusMessage('사주가 수정되었습니다')
+    return data
+  }
+
+  // Update: 해석 글은 두고 입력 정보만 수정합니다.
+  async function handleSaveInfo() {
+    if (!selectedId) return
+
+    if (!isFormComplete) {
+      setShowFieldErrors(true)
+      setErrorMessage('이름, 생년월일, 태어난 시간, 성별, 양력/음력을 모두 입력해 주세요.')
+      return
+    }
+
+    setIsSaving(true)
+    setErrorMessage('')
+
+    const { data, error } = await supabase
+      .from('saju_readings')
+      .update({
+        name,
+        birth_date: birthDate,
+        birth_time: birthTime,
+        gender,
+        calendar_type: calendarType,
+      })
+      .eq('id', selectedId)
+      .select('id, name, birth_date, birth_time, gender, calendar_type, result, created_at')
+      .single()
+
+    setIsSaving(false)
+
+    if (error) {
+      setErrorMessage(`정보 수정에 실패했습니다: ${error.message}`)
+      return
+    }
+
+    setReadings((prev) => prev.map((item) => (item.id === data.id ? data : item)))
+    setIsEditing(false)
+    setShowFieldErrors(false)
+    setStatusMessage('정보가 수정되었습니다')
+  }
+
+  // Delete: 선택한 사주 기록을 삭제합니다.
+  async function handleDeleteReading() {
+    if (!selectedId) return
+
+    const confirmed = window.confirm(`${name || '이 사주'} 기록을 삭제할까요?`)
+    if (!confirmed) return
+
+    setIsSaving(true)
+    setErrorMessage('')
+
+    const { error } = await supabase
+      .from('saju_readings')
+      .delete()
+      .eq('id', selectedId)
+
+    setIsSaving(false)
+
+    if (error) {
+      setErrorMessage(`삭제에 실패했습니다: ${error.message}`)
+      return
+    }
+
+    setReadings((prev) => prev.filter((item) => item.id !== selectedId))
+    handleNewSaju()
+    setStatusMessage('사주가 삭제되었습니다')
+  }
+
+  // 해석 결과를 Create 또는 Update로 저장합니다.
+  async function saveReading(outputText, targetId = null) {
+    if (targetId) {
+      return updateReadingResult(outputText, targetId)
+    }
+    return createReading(outputText)
   }
 
   // 버튼 클릭 시 Gemini Interactions API를 호출합니다.
@@ -330,6 +475,8 @@ function App() {
 
 위 정보를 바탕으로 사주 기본 차트를 세우고 해석해 주세요.`
 
+    const updateTargetId = isReinterpreting ? selectedId : null
+
     setIsLoading(true)
     setErrorMessage('')
     setStatusMessage('')
@@ -337,7 +484,9 @@ function App() {
     setResult('')
     setDisplayedResult('')
     setIsTyping(false)
-    setSelectedId(null)
+    if (!updateTargetId) {
+      setSelectedId(null)
+    }
     setRevealMode('type')
 
     try {
@@ -379,7 +528,7 @@ function App() {
 
       // 해석이 나온 뒤에만, 입력값과 결과를 함께 저장합니다.
       if (outputText) {
-        await saveReading(finalText)
+        await saveReading(finalText, updateTargetId)
       }
     } catch (error) {
       setErrorMessage(error.message)
@@ -393,6 +542,10 @@ function App() {
     if (event.key !== 'Enter' || event.target.tagName === 'TEXTAREA') return
     if (isViewingSaved || isBusy) return
     event.preventDefault()
+    if (isEditing) {
+      handleSaveInfo()
+      return
+    }
     handleAskSaju()
   }
 
@@ -445,21 +598,68 @@ function App() {
           <p className="sheet-lead">
             {isViewingSaved
               ? '저장된 명식을 보고 있습니다'
-              : '생년월일을 적으면 명식을 풀어 드립니다'}
+              : isEditing
+                ? '저장본 정보를 수정하고 있습니다'
+                : isReinterpreting
+                  ? '같은 기록을 다시 해석해 덮어씁니다'
+                  : '생년월일을 적으면 명식을 풀어 드립니다'}
           </p>
         </header>
 
         {isViewingSaved && (
           <div className="mode-banner" role="status">
             <p className="mode-banner-text">
-              <strong>{name}</strong>님의 저장본입니다. 새 사주를 보려면 아래 버튼을 눌러 주세요.
+              <strong>{name}</strong>님의 저장본입니다. 수정·다시 해석·삭제가 가능합니다.
             </p>
             <div className="mode-banner-actions">
-              <button type="button" className="ghost-btn" onClick={handleReinterpret}>
+              <button type="button" className="ghost-btn" onClick={handleStartEdit} disabled={isBusy}>
+                정보 수정
+              </button>
+              <button type="button" className="ghost-btn" onClick={handleReinterpret} disabled={isBusy}>
                 이 정보로 다시 해석
               </button>
-              <button type="button" className="ghost-btn ghost-btn-strong" onClick={handleNewSaju}>
+              <button type="button" className="ghost-btn ghost-btn-danger" onClick={handleDeleteReading} disabled={isBusy}>
+                삭제
+              </button>
+              <button type="button" className="ghost-btn ghost-btn-strong" onClick={handleNewSaju} disabled={isBusy}>
                 새 사주 만들기
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isEditing && (
+          <div className="mode-banner" role="status">
+            <p className="mode-banner-text">
+              이름·생년월일 등 입력 정보만 바꾸고 저장할 수 있습니다. 해석 글은 그대로 둡니다.
+            </p>
+            <div className="mode-banner-actions">
+              <button type="button" className="ghost-btn" onClick={handleCancelEdit} disabled={isBusy}>
+                수정 취소
+              </button>
+              <button type="button" className="ghost-btn ghost-btn-strong" onClick={handleSaveInfo} disabled={isBusy}>
+                {isSaving ? '저장 중...' : '변경 내용 저장'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isReinterpreting && (
+          <div className="mode-banner" role="status">
+            <p className="mode-banner-text">
+              다시 해석하면 <strong>기존 기록이 새 결과로 덮어써집니다.</strong>
+            </p>
+            <div className="mode-banner-actions">
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => {
+                  const current = readings.find((item) => item.id === selectedId)
+                  if (current) handleSelectReading(current)
+                }}
+                disabled={isBusy}
+              >
+                다시 해석 취소
               </button>
             </div>
           </div>
@@ -479,7 +679,7 @@ function App() {
               // e.target.value는 지금 입력창에 적힌 글자입니다.
               // setName으로 name 상태를 바꾸면, 아래 <p>도 함께 다시 그려집니다.
               onChange={(e) => setName(e.target.value)}
-              disabled={isViewingSaved || isBusy}
+              disabled={formLocked}
               autoComplete="name"
             />
           </div>
@@ -491,7 +691,7 @@ function App() {
               type="date"
               value={birthDate}
               onChange={(e) => setBirthDate(e.target.value)}
-              disabled={isViewingSaved || isBusy}
+              disabled={formLocked}
               max={new Date().toISOString().slice(0, 10)}
             />
           </div>
@@ -503,7 +703,7 @@ function App() {
               type="time"
               value={birthTime}
               onChange={(e) => setBirthTime(e.target.value)}
-              disabled={isViewingSaved || isBusy}
+              disabled={formLocked}
             />
           </div>
 
@@ -520,7 +720,7 @@ function App() {
                   value="남성"
                   checked={gender === '남성'}
                   onChange={(e) => setGender(e.target.value)}
-                  disabled={isViewingSaved || isBusy}
+                  disabled={formLocked}
                 />
                 남성
               </label>
@@ -532,7 +732,7 @@ function App() {
                   value="여성"
                   checked={gender === '여성'}
                   onChange={(e) => setGender(e.target.value)}
-                  disabled={isViewingSaved || isBusy}
+                  disabled={formLocked}
                 />
                 여성
               </label>
@@ -550,7 +750,7 @@ function App() {
                   value="양력"
                   checked={calendarType === '양력'}
                   onChange={(e) => setCalendarType(e.target.value)}
-                  disabled={isViewingSaved || isBusy}
+                  disabled={formLocked}
                 />
                 양력
               </label>
@@ -562,7 +762,7 @@ function App() {
                   value="음력"
                   checked={calendarType === '음력'}
                   onChange={(e) => setCalendarType(e.target.value)}
-                  disabled={isViewingSaved || isBusy}
+                  disabled={formLocked}
                 />
                 음력
               </label>
@@ -573,14 +773,14 @@ function App() {
         {/* name이 바뀔 때마다 이 문장도 실시간으로 바뀝니다. */}
         <p className="preview">{name ? `${name}님의 사주` : '이름을 입력해 주세요'}</p>
 
-        {!isViewingSaved && (
+        {!isViewingSaved && !isEditing && (
           <button
             className="submit"
             type="button"
             onClick={handleAskSaju}
             disabled={isBusy}
           >
-            {isLoading ? '해석 중...' : isTyping ? '작성 중...' : '사주 해석하기'}
+            {submitLabel}
           </button>
         )}
 
