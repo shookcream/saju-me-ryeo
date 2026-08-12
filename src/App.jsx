@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import './App.css'
+import { supabase } from './lib/supabase'
 
 // Gemini에게 역할을 알려 주는 시스템 프롬프트입니다.
 // 실제 생년월일 데이터는 아래 handleAskSaju에서 따로 붙여 보냅니다.
@@ -22,6 +23,25 @@ const SAJU_SYSTEM_PROMPT = `return only Korean.
 답변은 한국어로만 작성하세요.
 또한 정확한 해석을 해야 하므로 결과 확인을 할 때마다 내용이 지속적으로 바뀌면 안됩니다.`
 
+function formatBirthTime(value) {
+  if (!value) return ''
+  return String(value).slice(0, 5)
+}
+
+// DB/모델에서 온 줄바꿈을 화면용으로 정리합니다.
+function normalizeResultText(text) {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\\n/g, '\n')
+}
+
+function formatDisplayDate(dateString) {
+  if (!dateString) return ''
+  const [year, month, day] = String(dateString).split('-')
+  if (!year || !month || !day) return dateString
+  return `${year}.${month}.${day}`
+}
+
 function App() {
   // name: 사용자가 입력한 이름을 저장하는 상태
   // setName: name 값을 바꿔 주는 함수
@@ -36,11 +56,57 @@ function App() {
   const [isTyping, setIsTyping] = useState(false) // 결과를 한 글자씩 쓰는 중인지
   const [isLoading, setIsLoading] = useState(false) // API를 기다리는 중인지
   const [errorMessage, setErrorMessage] = useState('') // 실패했을 때 보여줄 메시지
+  const [statusMessage, setStatusMessage] = useState('') // 저장 완료 같은 짧은 안내
+  const [readings, setReadings] = useState([]) // 사이드바에 보여줄 저장된 사주 목록
+  const [selectedId, setSelectedId] = useState(null) // 사이드바에서 고른 기록 id
+  const [revealMode, setRevealMode] = useState('type') // type: 타이핑 / instant: 저장본 바로 표시
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true) // 목록 첫 로딩
+  const [showFieldErrors, setShowFieldErrors] = useState(false) // 빈 칸 강조 표시
 
-  // result가 생기면 글자를 조금씩 늘려서, 줄줄이 작성되는 것처럼 보여 줍니다.
+  // 저장본을 보거나, 방금 저장된 결과가 끝난 뒤에는 입력칸을 잠급니다.
+  const isViewingSaved = Boolean(selectedId) && !isLoading && !isTyping
+  const isFormComplete = Boolean(name && birthDate && birthTime && gender && calendarType)
+  const isBusy = isLoading || isTyping
+
+  // 저장된 사주 목록을 Supabase에서 불러옵니다.
+  async function loadReadings() {
+    setIsHistoryLoading(true)
+    const { data, error } = await supabase
+      .from('saju_readings')
+      .select('id, name, birth_date, birth_time, gender, calendar_type, result, created_at')
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      setErrorMessage(`저장된 사주를 불러오지 못했습니다: ${error.message}`)
+      setIsHistoryLoading(false)
+      return
+    }
+
+    setReadings(data || [])
+    setIsHistoryLoading(false)
+  }
+
+  useEffect(() => {
+    loadReadings()
+  }, [])
+
+  // 저장 완료 안내는 잠시 뒤 자동으로 사라집니다.
+  useEffect(() => {
+    if (!statusMessage) return undefined
+    const timerId = setTimeout(() => setStatusMessage(''), 2800)
+    return () => clearTimeout(timerId)
+  }, [statusMessage])
+
+  // 새 해석은 타이핑, 저장본은 한 번에 예쁘게 보여 줍니다.
   useEffect(() => {
     if (!result) {
       setDisplayedResult('')
+      setIsTyping(false)
+      return
+    }
+
+    if (revealMode === 'instant') {
+      setDisplayedResult(result)
       setIsTyping(false)
       return
     }
@@ -49,7 +115,7 @@ function App() {
     setIsTyping(true)
 
     let index = 0
-    const charsPerTick = 1 // 한 번에 몇 글자씩 늘릴지
+    const charsPerTick = 2
     const intervalId = setInterval(() => {
       index += charsPerTick
 
@@ -61,11 +127,11 @@ function App() {
       }
 
       setDisplayedResult(result.slice(0, index))
-    }, 40)
+    }, 28)
 
     // 컴포넌트가 사라지거나, 새 해석이 시작되면 타이머를 끕니다.
     return () => clearInterval(intervalId)
-  }, [result])
+  }, [result, revealMode])
 
   // # 제목 줄은 굵게, **글자**도 굵게 보여 주고, #과 * 기호는 화면에 남기지 않습니다.
   // showCursor가 true이면 마지막 줄 끝에 깜빡이는 커서를 붙입니다.
@@ -125,11 +191,124 @@ function App() {
     return age
   }
 
+  function fieldClass(value) {
+    return `field${showFieldErrors && !value ? ' is-invalid' : ''}`
+  }
+
+  // 사이드바에서 이름을 누르면, 그 기록의 입력값과 사주 결과를 바로 예쁘게 불러옵니다.
+  function handleSelectReading(reading) {
+    const savedResult = normalizeResultText(reading.result)
+    setSelectedId(reading.id)
+    setName(reading.name || '')
+    setBirthDate(reading.birth_date || '')
+    setBirthTime(formatBirthTime(reading.birth_time))
+    setGender(reading.gender || '')
+    setCalendarType(reading.calendar_type || '')
+    setErrorMessage('')
+    setStatusMessage('')
+    setShowFieldErrors(false)
+    setIsLoading(false)
+    setRevealMode('instant')
+    setResult(savedResult)
+    setDisplayedResult(savedResult)
+    setIsTyping(false)
+
+    // 결과 카드가 보이도록 부드럽게 스크롤합니다.
+    requestAnimationFrame(() => {
+      document.getElementById('saju-result')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+      })
+    })
+  }
+
+  // 입력·결과·선택 상태를 비워서 새 사주를 처음부터 적을 수 있게 합니다.
+  function handleNewSaju() {
+    setSelectedId(null)
+    setName('')
+    setBirthDate('')
+    setBirthTime('')
+    setGender('')
+    setCalendarType('')
+    setResult('')
+    setDisplayedResult('')
+    setIsTyping(false)
+    setIsLoading(false)
+    setErrorMessage('')
+    setStatusMessage('')
+    setShowFieldErrors(false)
+    setRevealMode('type')
+
+    requestAnimationFrame(() => {
+      document.getElementById('name')?.focus()
+    })
+  }
+
+  // 저장본 내용을 유지한 채 다시 해석할 수 있게 입력 잠금을 풉니다.
+  function handleReinterpret() {
+    setSelectedId(null)
+    setResult('')
+    setDisplayedResult('')
+    setIsTyping(false)
+    setErrorMessage('')
+    setStatusMessage('')
+    setShowFieldErrors(false)
+    setRevealMode('type')
+
+    requestAnimationFrame(() => {
+      document.getElementById('name')?.focus()
+    })
+  }
+
+  // 타이핑 애니메이션을 건너뛰고 전체 결과를 바로 보여 줍니다.
+  function handleSkipTyping() {
+    if (!result || !isTyping) return
+    setRevealMode('instant')
+    setDisplayedResult(result)
+    setIsTyping(false)
+  }
+
+  // 입력값과 사주 결과를 한 줄로 묶어 Supabase에 저장합니다.
+  async function saveReading(outputText) {
+    const { data, error } = await supabase
+      .from('saju_readings')
+      .insert({
+        name,
+        birth_date: birthDate,
+        birth_time: birthTime,
+        gender,
+        calendar_type: calendarType,
+        result: outputText,
+      })
+      .select('id, name, birth_date, birth_time, gender, calendar_type, result, created_at')
+      .single()
+
+    if (error) {
+      setErrorMessage(`사주 결과 저장에 실패했습니다: ${error.message}`)
+      return
+    }
+
+    setReadings((prev) => [data, ...prev])
+    setSelectedId(data.id)
+    setStatusMessage('사주가 저장되었습니다')
+  }
+
   // 버튼 클릭 시 Gemini Interactions API를 호출합니다.
   async function handleAskSaju() {
     // 비어 있는 칸이 있으면 API를 부르지 않습니다.
-    if (!name || !birthDate || !birthTime || !gender || !calendarType) {
+    if (!isFormComplete) {
+      setShowFieldErrors(true)
       setErrorMessage('이름, 생년월일, 태어난 시간, 성별, 양력/음력을 모두 입력해 주세요.')
+      const firstEmptyId = !name
+        ? 'name'
+        : !birthDate
+          ? 'birthDate'
+          : !birthTime
+            ? 'birthTime'
+            : null
+      if (firstEmptyId) {
+        document.getElementById(firstEmptyId)?.focus()
+      }
       return
     }
 
@@ -153,9 +332,13 @@ function App() {
 
     setIsLoading(true)
     setErrorMessage('')
+    setStatusMessage('')
+    setShowFieldErrors(false)
     setResult('')
     setDisplayedResult('')
     setIsTyping(false)
+    setSelectedId(null)
+    setRevealMode('type')
 
     try {
       // Interactions API: POST /v1beta/interactions
@@ -191,7 +374,13 @@ function App() {
         .map((part) => part.text)
 
       const outputText = data.output_text || texts.join('\n')
-      setResult(outputText || '해석 결과를 받지 못했습니다.')
+      const finalText = outputText || '해석 결과를 받지 못했습니다.'
+      setResult(finalText)
+
+      // 해석이 나온 뒤에만, 입력값과 결과를 함께 저장합니다.
+      if (outputText) {
+        await saveReading(finalText)
+      }
     } catch (error) {
       setErrorMessage(error.message)
     } finally {
@@ -200,121 +389,212 @@ function App() {
     }
   }
 
+  function handleFormKeyDown(event) {
+    if (event.key !== 'Enter' || event.target.tagName === 'TEXTAREA') return
+    if (isViewingSaved || isBusy) return
+    event.preventDefault()
+    handleAskSaju()
+  }
+
   return (
     <main className="page">
-      <section className="sheet">
+      <aside className="history-sidebar" aria-label="저장된 사주 목록">
+        <p className="history-eyebrow">記錄</p>
+        <div className="history-heading-row">
+          <h2 className="history-title">저장된 사주</h2>
+          {!isHistoryLoading && readings.length > 0 && (
+            <span className="history-count">{readings.length}</span>
+          )}
+        </div>
+        <button
+          type="button"
+          className="history-new"
+          onClick={handleNewSaju}
+          disabled={isBusy}
+        >
+          새 사주 만들기
+        </button>
+        {isHistoryLoading ? (
+          <p className="history-empty">목록을 불러오는 중...</p>
+        ) : readings.length === 0 ? (
+          <p className="history-empty">아직 저장된 사주가 없습니다</p>
+        ) : (
+          <ul className="history-list">
+            {readings.map((reading) => (
+              <li key={reading.id}>
+                <button
+                  type="button"
+                  className={`history-item${selectedId === reading.id ? ' is-active' : ''}`}
+                  onClick={() => handleSelectReading(reading)}
+                >
+                  <span className="history-item-name">{reading.name}</span>
+                  <span className="history-item-meta">
+                    {formatDisplayDate(reading.birth_date)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </aside>
+
+      <section className={`sheet${isViewingSaved ? ' is-viewing' : ''}`}>
         <header className="sheet-header">
           <p className="sheet-eyebrow">四柱</p>
           <h1>사주미麗</h1>
-          <p className="sheet-lead">생년월일을 적으면 명식을 풀어 드립니다</p>
+          <p className="sheet-lead">
+            {isViewingSaved
+              ? '저장된 명식을 보고 있습니다'
+              : '생년월일을 적으면 명식을 풀어 드립니다'}
+          </p>
         </header>
 
-        <div className="field">
-          {/* htmlFor와 input의 id를 같게 하면, 라벨을 눌러도 입력창에 포커스가 갑니다. */}
-          <label className="field-label" htmlFor="name">이름</label>
-          <input
-            id="name"
-            type="text"
-            placeholder="이름을 입력하세요"
-            // value={name}: input에 보이는 글자를 name 상태와 연결합니다.
-            value={name}
-            // onChange: 사용자가 글자를 칠 때마다 실행됩니다.
-            // e.target.value는 지금 입력창에 적힌 글자입니다.
-            // setName으로 name 상태를 바꾸면, 아래 <p>도 함께 다시 그려집니다.
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-
-        <div className="field">
-          <label className="field-label" htmlFor="birthDate">생년월일</label>
-          <input
-            id="birthDate"
-            type="date"
-            value={birthDate}
-            onChange={(e) => setBirthDate(e.target.value)}
-          />
-        </div>
-
-        <div className="field">
-          <label className="field-label" htmlFor="birthTime">태어난 시간</label>
-          <input
-            id="birthTime"
-            type="time"
-            value={birthTime}
-            onChange={(e) => setBirthTime(e.target.value)}
-          />
-        </div>
-
-        <div className="field">
-          <span className="field-label">성별</span>
-          {/* name이 같으면 둘 중 하나만 선택할 수 있습니다. */}
-          {/* checked: 지금 gender 상태와 이 버튼의 value가 같으면 체크됩니다. */}
-          <div className="choices">
-            <label className="choice" htmlFor="gender-male">
-              <input
-                id="gender-male"
-                type="radio"
-                name="gender"
-                value="남성"
-                checked={gender === '남성'}
-                onChange={(e) => setGender(e.target.value)}
-              />
-              남성
-            </label>
-            <label className="choice" htmlFor="gender-female">
-              <input
-                id="gender-female"
-                type="radio"
-                name="gender"
-                value="여성"
-                checked={gender === '여성'}
-                onChange={(e) => setGender(e.target.value)}
-              />
-              여성
-            </label>
+        {isViewingSaved && (
+          <div className="mode-banner" role="status">
+            <p className="mode-banner-text">
+              <strong>{name}</strong>님의 저장본입니다. 새 사주를 보려면 아래 버튼을 눌러 주세요.
+            </p>
+            <div className="mode-banner-actions">
+              <button type="button" className="ghost-btn" onClick={handleReinterpret}>
+                이 정보로 다시 해석
+              </button>
+              <button type="button" className="ghost-btn ghost-btn-strong" onClick={handleNewSaju}>
+                새 사주 만들기
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
-        <div className="field">
-          <span className="field-label">양력/음력</span>
-          <div className="choices">
-            <label className="choice" htmlFor="calendar-solar">
-              <input
-                id="calendar-solar"
-                type="radio"
-                name="calendarType"
-                value="양력"
-                checked={calendarType === '양력'}
-                onChange={(e) => setCalendarType(e.target.value)}
-              />
-              양력
-            </label>
-            <label className="choice" htmlFor="calendar-lunar">
-              <input
-                id="calendar-lunar"
-                type="radio"
-                name="calendarType"
-                value="음력"
-                checked={calendarType === '음력'}
-                onChange={(e) => setCalendarType(e.target.value)}
-              />
-              음력
-            </label>
+        <div className="form-block" onKeyDown={handleFormKeyDown}>
+          <div className={fieldClass(name)}>
+            {/* htmlFor와 input의 id를 같게 하면, 라벨을 눌러도 입력창에 포커스가 갑니다. */}
+            <label className="field-label" htmlFor="name">이름</label>
+            <input
+              id="name"
+              type="text"
+              placeholder="이름을 입력하세요"
+              // value={name}: input에 보이는 글자를 name 상태와 연결합니다.
+              value={name}
+              // onChange: 사용자가 글자를 칠 때마다 실행됩니다.
+              // e.target.value는 지금 입력창에 적힌 글자입니다.
+              // setName으로 name 상태를 바꾸면, 아래 <p>도 함께 다시 그려집니다.
+              onChange={(e) => setName(e.target.value)}
+              disabled={isViewingSaved || isBusy}
+              autoComplete="name"
+            />
+          </div>
+
+          <div className={fieldClass(birthDate)}>
+            <label className="field-label" htmlFor="birthDate">생년월일</label>
+            <input
+              id="birthDate"
+              type="date"
+              value={birthDate}
+              onChange={(e) => setBirthDate(e.target.value)}
+              disabled={isViewingSaved || isBusy}
+              max={new Date().toISOString().slice(0, 10)}
+            />
+          </div>
+
+          <div className={fieldClass(birthTime)}>
+            <label className="field-label" htmlFor="birthTime">태어난 시간</label>
+            <input
+              id="birthTime"
+              type="time"
+              value={birthTime}
+              onChange={(e) => setBirthTime(e.target.value)}
+              disabled={isViewingSaved || isBusy}
+            />
+          </div>
+
+          <div className={fieldClass(gender)}>
+            <span className="field-label">성별</span>
+            {/* name이 같으면 둘 중 하나만 선택할 수 있습니다. */}
+            {/* checked: 지금 gender 상태와 이 버튼의 value가 같으면 체크됩니다. */}
+            <div className="choices">
+              <label className="choice" htmlFor="gender-male">
+                <input
+                  id="gender-male"
+                  type="radio"
+                  name="gender"
+                  value="남성"
+                  checked={gender === '남성'}
+                  onChange={(e) => setGender(e.target.value)}
+                  disabled={isViewingSaved || isBusy}
+                />
+                남성
+              </label>
+              <label className="choice" htmlFor="gender-female">
+                <input
+                  id="gender-female"
+                  type="radio"
+                  name="gender"
+                  value="여성"
+                  checked={gender === '여성'}
+                  onChange={(e) => setGender(e.target.value)}
+                  disabled={isViewingSaved || isBusy}
+                />
+                여성
+              </label>
+            </div>
+          </div>
+
+          <div className={fieldClass(calendarType)}>
+            <span className="field-label">양력/음력</span>
+            <div className="choices">
+              <label className="choice" htmlFor="calendar-solar">
+                <input
+                  id="calendar-solar"
+                  type="radio"
+                  name="calendarType"
+                  value="양력"
+                  checked={calendarType === '양력'}
+                  onChange={(e) => setCalendarType(e.target.value)}
+                  disabled={isViewingSaved || isBusy}
+                />
+                양력
+              </label>
+              <label className="choice" htmlFor="calendar-lunar">
+                <input
+                  id="calendar-lunar"
+                  type="radio"
+                  name="calendarType"
+                  value="음력"
+                  checked={calendarType === '음력'}
+                  onChange={(e) => setCalendarType(e.target.value)}
+                  disabled={isViewingSaved || isBusy}
+                />
+                음력
+              </label>
+            </div>
           </div>
         </div>
 
         {/* name이 바뀔 때마다 이 문장도 실시간으로 바뀝니다. */}
-        <p className="preview">{name}님의 사주</p>
+        <p className="preview">{name ? `${name}님의 사주` : '이름을 입력해 주세요'}</p>
 
-        <button
-          className="submit"
-          type="button"
-          onClick={handleAskSaju}
-          disabled={isLoading || isTyping}
-        >
-          {isLoading ? '해석 중...' : isTyping ? '작성 중...' : '사주 해석하기'}
-        </button>
+        {!isViewingSaved && (
+          <button
+            className="submit"
+            type="button"
+            onClick={handleAskSaju}
+            disabled={isBusy}
+          >
+            {isLoading ? '해석 중...' : isTyping ? '작성 중...' : '사주 해석하기'}
+          </button>
+        )}
 
+        {isTyping && (
+          <button
+            type="button"
+            className="skip-typing"
+            onClick={handleSkipTyping}
+          >
+            결과 전체 보기
+          </button>
+        )}
+
+        {statusMessage && <p className="status">{statusMessage}</p>}
         {errorMessage && <p className="error">{errorMessage}</p>}
 
         {/* 해석 중에는 결과 자리에 스켈레톤을 보여 줍니다. */}
@@ -334,8 +614,27 @@ function App() {
 
         {/* displayedResult가 늘어날 때마다 화면에 이어서 작성되는 것처럼 보입니다. */}
         {!isLoading && displayedResult && (
-          <div className="result">
-            {renderSajuResult(displayedResult, isTyping)}
+          <div
+            id="saju-result"
+            key={selectedId || `live-${result.slice(0, 24)}`}
+            className={`result${revealMode === 'instant' || !isTyping ? ' result-instant' : ''}`}
+          >
+            <div className="result-meta">
+              <p className="result-meta-name">{name || '이름 없음'}님의 명식</p>
+              <p className="result-meta-detail">
+                {[
+                  formatDisplayDate(birthDate),
+                  formatBirthTime(birthTime),
+                  gender,
+                  calendarType,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+            </div>
+            <div className="result-body">
+              {renderSajuResult(displayedResult, isTyping)}
+            </div>
           </div>
         )}
       </section>
