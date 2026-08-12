@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import './App.css'
 
 // Gemini에게 역할을 알려 주는 시스템 프롬프트입니다.
@@ -19,7 +19,8 @@ const SAJU_SYSTEM_PROMPT = `return only Korean.
 이외에도 특이한점 한가지를 찾아서 언급해 주세요.
 
 먼저 제공된 생년월일·시간·성별·양력/음력을 바탕으로 사주 명식(년주, 월주, 일주, 시주), 오행 분포, 십신, 지장간, 십이운성, 12신살, 공망, 대운·세운을 세운 뒤 위 규칙대로 해석하세요.
-답변은 한국어로만 작성하세요.`
+답변은 한국어로만 작성하세요.
+또한 정확한 해석을 해야 하므로 결과 확인을 할 때마다 내용이 지속적으로 바뀌면 안됩니다.`
 
 function App() {
   // name: 사용자가 입력한 이름을 저장하는 상태
@@ -30,25 +31,69 @@ function App() {
   const [birthTime, setBirthTime] = useState('') // 태어난 시간 (time input 값)
   const [gender, setGender] = useState('') // 성별 (라디오 버튼 값)
   const [calendarType, setCalendarType] = useState('') // 양력/음력 (라디오 버튼 값)
-  const [result, setResult] = useState('') // Gemini가 돌려준 사주 해석 글
+  const [result, setResult] = useState('') // Gemini가 돌려준 사주 해석 글 전체
+  const [displayedResult, setDisplayedResult] = useState('') // 화면에 타이핑처럼 보여 주는 글
+  const [isTyping, setIsTyping] = useState(false) // 결과를 한 글자씩 쓰는 중인지
   const [isLoading, setIsLoading] = useState(false) // API를 기다리는 중인지
   const [errorMessage, setErrorMessage] = useState('') // 실패했을 때 보여줄 메시지
 
+  // result가 생기면 글자를 조금씩 늘려서, 줄줄이 작성되는 것처럼 보여 줍니다.
+  useEffect(() => {
+    if (!result) {
+      setDisplayedResult('')
+      setIsTyping(false)
+      return
+    }
+
+    setDisplayedResult('')
+    setIsTyping(true)
+
+    let index = 0
+    const charsPerTick = 1 // 한 번에 몇 글자씩 늘릴지
+    const intervalId = setInterval(() => {
+      index += charsPerTick
+
+      if (index >= result.length) {
+        setDisplayedResult(result)
+        setIsTyping(false)
+        clearInterval(intervalId)
+        return
+      }
+
+      setDisplayedResult(result.slice(0, index))
+    }, 40)
+
+    // 컴포넌트가 사라지거나, 새 해석이 시작되면 타이머를 끕니다.
+    return () => clearInterval(intervalId)
+  }, [result])
+
   // # 제목 줄은 굵게, **글자**도 굵게 보여 주고, #과 * 기호는 화면에 남기지 않습니다.
-  function renderSajuResult(text) {
-    return text.split('\n').map((line, index) => {
+  // showCursor가 true이면 마지막 줄 끝에 깜빡이는 커서를 붙입니다.
+  function renderSajuResult(text, showCursor = false) {
+    const lines = text.split('\n')
+
+    return lines.map((line, index) => {
+      const isLastLine = index === lines.length - 1
+      const cursor = showCursor && isLastLine
+        ? <span className="typing-cursor" aria-hidden="true" />
+        : null
       const headingMatch = line.match(/^\s*#{1,6}\s*(.*)$/)
 
       if (headingMatch) {
         return (
           <p key={index} className="result-heading">
             {headingMatch[1].replace(/\*/g, '')}
+            {cursor}
           </p>
         )
       }
 
       if (line.trim() === '') {
-        return <br key={index} />
+        return (
+          <p key={index} className="result-line">
+            {cursor || <br />}
+          </p>
+        )
       }
 
       // **이 글자**처럼 별표 두 개로 감싼 부분만 굵게 만듭니다.
@@ -62,6 +107,7 @@ function App() {
             }
             return part.replace(/\*/g, '')
           })}
+          {cursor}
         </p>
       )
     })
@@ -108,6 +154,8 @@ function App() {
     setIsLoading(true)
     setErrorMessage('')
     setResult('')
+    setDisplayedResult('')
+    setIsTyping(false)
 
     try {
       // Interactions API: POST /v1beta/interactions
@@ -258,13 +306,38 @@ function App() {
         {/* name이 바뀔 때마다 이 문장도 실시간으로 바뀝니다. */}
         <p className="preview">{name}님의 사주</p>
 
-        <button className="submit" type="button" onClick={handleAskSaju} disabled={isLoading}>
-          {isLoading ? '해석 중...' : '사주 해석하기'}
+        <button
+          className="submit"
+          type="button"
+          onClick={handleAskSaju}
+          disabled={isLoading || isTyping}
+        >
+          {isLoading ? '해석 중...' : isTyping ? '작성 중...' : '사주 해석하기'}
         </button>
 
         {errorMessage && <p className="error">{errorMessage}</p>}
 
-        {result && <div className="result">{renderSajuResult(result)}</div>}
+        {/* 해석 중에는 결과 자리에 스켈레톤을 보여 줍니다. */}
+        {isLoading && (
+          <div className="result result-skeleton" aria-busy="true" aria-live="polite">
+            <div className="skeleton-line skeleton-heading" />
+            <div className="skeleton-line skeleton-body" />
+            <div className="skeleton-line skeleton-body" />
+            <div className="skeleton-line skeleton-body short" />
+            <div className="skeleton-line skeleton-heading" />
+            <div className="skeleton-line skeleton-body" />
+            <div className="skeleton-line skeleton-body" />
+            <div className="skeleton-line skeleton-body short" />
+            <p className="skeleton-label">명식을 살피는 중...</p>
+          </div>
+        )}
+
+        {/* displayedResult가 늘어날 때마다 화면에 이어서 작성되는 것처럼 보입니다. */}
+        {!isLoading && displayedResult && (
+          <div className="result">
+            {renderSajuResult(displayedResult, isTyping)}
+          </div>
+        )}
       </section>
     </main>
   )
