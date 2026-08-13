@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 import { supabase } from './lib/supabase'
+import ProfileModal from './ProfileModal'
 
 // Gemini에게 역할을 알려 주는 시스템 프롬프트입니다.
 // 실제 생년월일 데이터는 아래 handleAskSaju에서 따로 붙여 보냅니다.
@@ -14,10 +15,11 @@ const SAJU_SYSTEM_PROMPT = `return only Korean.
 2) 사주에서 특이하거나 눈에 띄는 점이 있으면 알려주세요.
 3) 약점도 솔직하게 말해 주세요.
 4) 돋보이는 특징을 최소 한 가지 뽑아 명확히 설명해 주세요.
-5) 마지막은 사용자가 가장 궁금한 점을 묻는 질문으로 끝내주세요.
+5) 마지막은 질문으로 끝내지 마세요. 대신 "## 총정리" 또는 "## 결론" 제목 아래, 이 사람의 핵심 성격·강점·주의점·삶의 방향을 3~5문장으로 압축해 마무리하세요.
 6) 판단 근거는 사용자가 제공한 모든 정보와 해석 가능한 모든 사주 정보를 종합해 제시해 주세요.
 7) 긍정적 해석과 부정적 해석을 모두 고려해 주세요.
 이외에도 특이한점 한가지를 찾아서 언급해 주세요.
+답변 끝에서 사용자에게 되묻거나, 연애운·진로 등 추가 질문을 유도하지 마세요.
 
 먼저 제공된 생년월일·시간·성별·양력/음력을 바탕으로 사주 명식(년주, 월주, 일주, 시주), 오행 분포, 십신, 지장간, 십이운성, 12신살, 공망, 대운·세운을 세운 뒤 위 규칙대로 해석하세요.
 답변은 한국어로만 작성하세요.
@@ -26,6 +28,14 @@ const SAJU_SYSTEM_PROMPT = `return only Korean.
 function formatBirthTime(value) {
   if (!value) return ''
   return String(value).slice(0, 5)
+}
+
+// 시·분이 모두 채워지면 time 선택 창을 닫습니다. (date input과 비슷한 사용감)
+function closeTimePickerIfComplete(event) {
+  const value = event.target.value
+  if (/^\d{2}:\d{2}/.test(value)) {
+    event.target.blur()
+  }
 }
 
 // DB/모델에서 온 줄바꿈을 화면용으로 정리합니다.
@@ -40,6 +50,20 @@ function formatDisplayDate(dateString) {
   const [year, month, day] = String(dateString).split('-')
   if (!year || !month || !day) return dateString
   return `${year}.${month}.${day}`
+}
+
+// 사주를 본(저장한) 시각을 보기 좋게 표시합니다.
+function formatDisplayDateTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  return `${year}.${month}.${day} ${hour}:${minute}`
 }
 
 function App() {
@@ -57,6 +81,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false) // API를 기다리는 중인지
   const [errorMessage, setErrorMessage] = useState('') // 실패했을 때 보여줄 메시지
   const [statusMessage, setStatusMessage] = useState('') // 저장 완료 같은 짧은 안내
+  const [toastLeaving, setToastLeaving] = useState(false) // 토스트 퇴장 애니메이션 중
   const [readings, setReadings] = useState([]) // 사이드바에 보여줄 저장된 사주 목록
   const [selectedId, setSelectedId] = useState(null) // 사이드바에서 고른 기록 id
   const [revealMode, setRevealMode] = useState('type') // type: 타이핑 / instant: 저장본 바로 표시
@@ -65,27 +90,49 @@ function App() {
   const [isEditing, setIsEditing] = useState(false) // 저장본 입력값만 수정 중인지
   const [isReinterpreting, setIsReinterpreting] = useState(false) // 저장본을 다시 해석해 덮어쓸지
   const [isSaving, setIsSaving] = useState(false) // 수정/삭제 요청 중인지
+  const [isUnsaved, setIsUnsaved] = useState(false) // 해석은 됐지만 아직 DB에 안 올린 상태
   const [user, setUser] = useState(null) // 구글 로그인된 Supabase 사용자
   const [authLoading, setAuthLoading] = useState(true) // 세션 확인 중
   const [authBusy, setAuthBusy] = useState(false) // 로그인/로그아웃 진행 중
+  const [contextMenu, setContextMenu] = useState(null) // 우클릭 삭제 메뉴 { x, y, reading }
+  const [profile, setProfile] = useState(null) // public.users 프로필
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [profileModal, setProfileModal] = useState(null) // null | 'setup' | 'edit'
+  const [profileError, setProfileError] = useState('')
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
 
   // 저장본을 그냥 보고 있을 때만 입력칸을 잠급니다.
-  const isViewingSaved = Boolean(selectedId) && !isEditing && !isReinterpreting && !isLoading && !isTyping
+  const isViewingSaved = Boolean(selectedId) && !isEditing && !isReinterpreting && !isLoading && !isTyping && !isUnsaved
   const isFormComplete = Boolean(name && birthDate && birthTime && gender && calendarType)
-  const isBusy = isLoading || isTyping || isSaving || authBusy
+  const isBusy = isLoading || isTyping || isSaving || authBusy || isSavingProfile
   const formLocked = isViewingSaved || isBusy
-  const userLabel = user?.user_metadata?.full_name
+  const userLabel = profile?.name
+    || user?.user_metadata?.full_name
     || user?.user_metadata?.name
     || user?.email
     || '사용자'
   const userAvatar = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || ''
+  const needsProfileSetup = Boolean(user) && !profileLoading && !profile
+  const profileFormValues = {
+    name: profile?.name || '',
+    birthDate: profile?.birth_date || '',
+    birthTime: formatBirthTime(profile?.birth_time),
+    gender: profile?.gender || '',
+    calendarType: profile?.calendar_type || '',
+  }
   const submitLabel = isLoading
     ? '해석 중...'
     : isTyping
       ? '작성 중...'
       : isReinterpreting
-        ? '다시 해석하고 저장'
+        ? '다시 해석하기'
         : '사주 해석하기'
+  const saveLabel = isSaving
+    ? '저장 중...'
+    : isReinterpreting
+      ? '수정 내용 저장하기'
+      : '저장하기'
+  const canSaveResult = Boolean(result) && isUnsaved && !isLoading && !isEditing && !isTyping
 
   // 구글 로그인 세션을 확인하고, 이후 변화를 계속 듣습니다.
   useEffect(() => {
@@ -116,7 +163,7 @@ function App() {
     setIsHistoryLoading(true)
     const { data, error } = await supabase
       .from('saju_readings')
-      .select('id, name, birth_date, birth_time, gender, calendar_type, result, created_at')
+      .select('id, name, birth_date, birth_time, gender, calendar_type, result, created_at, user_id')
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -129,24 +176,116 @@ function App() {
     setIsHistoryLoading(false)
   }
 
+  // 프로필(users) 정보를 불러와 폼에 채웁니다.
+  function applyProfileToForm(nextProfile) {
+    if (!nextProfile) return
+    setName(nextProfile.name || '')
+    setBirthDate(nextProfile.birth_date || '')
+    setBirthTime(formatBirthTime(nextProfile.birth_time))
+    setGender(nextProfile.gender || '')
+    setCalendarType(nextProfile.calendar_type || '')
+  }
+
+  async function loadProfile(userId) {
+    setProfileLoading(true)
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, name, birth_date, birth_time, gender, calendar_type, created_at, updated_at')
+      .eq('id', userId)
+      .maybeSingle()
+
+    setProfileLoading(false)
+
+    if (error) {
+      setErrorMessage(`프로필을 불러오지 못했습니다: ${error.message}`)
+      return null
+    }
+
+    setProfile(data)
+
+    if (!data) {
+      setProfileModal('setup')
+      return null
+    }
+
+    applyProfileToForm(data)
+    setProfileModal((current) => (current === 'setup' ? null : current))
+    return data
+  }
+
   useEffect(() => {
     if (authLoading) return
 
     if (!user) {
+      setProfile(null)
+      setProfileModal(null)
+      setProfileError('')
       setReadings([])
       setIsHistoryLoading(false)
       return
     }
 
-    loadReadings()
+    let cancelled = false
+
+    ;(async () => {
+      const loadedProfile = await loadProfile(user.id)
+      if (cancelled) return
+      if (loadedProfile) {
+        await loadReadings()
+      } else {
+        setReadings([])
+        setIsHistoryLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
   }, [user, authLoading])
 
-  // 저장 완료 안내는 잠시 뒤 자동으로 사라집니다.
+  // 우클릭 메뉴는 바깥 클릭·스크롤·Esc로 닫습니다.
   useEffect(() => {
-    if (!statusMessage) return undefined
-    const timerId = setTimeout(() => setStatusMessage(''), 2800)
-    return () => clearTimeout(timerId)
+    if (!contextMenu) return undefined
+
+    function closeContextMenu() {
+      setContextMenu(null)
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') closeContextMenu()
+    }
+
+    window.addEventListener('click', closeContextMenu)
+    window.addEventListener('scroll', closeContextMenu, true)
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('click', closeContextMenu)
+      window.removeEventListener('scroll', closeContextMenu, true)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [contextMenu])
+
+  // 토스트는 잠시 보이다가, 사라질 때도 fade-out 애니메이션으로 퇴장합니다.
+  useEffect(() => {
+    if (!statusMessage) {
+      setToastLeaving(false)
+      return undefined
+    }
+
+    setToastLeaving(false)
+    const leaveTimer = setTimeout(() => setToastLeaving(true), 2400)
+    return () => clearTimeout(leaveTimer)
   }, [statusMessage])
+
+  useEffect(() => {
+    if (!toastLeaving || !statusMessage) return undefined
+    const clearTimer = setTimeout(() => {
+      setStatusMessage('')
+      setToastLeaving(false)
+    }, 320)
+    return () => clearTimeout(clearTimer)
+  }, [toastLeaving, statusMessage])
 
   // 새 해석은 타이핑, 저장본은 한 번에 예쁘게 보여 줍니다.
   useEffect(() => {
@@ -261,6 +400,7 @@ function App() {
     setIsLoading(false)
     setIsEditing(false)
     setIsReinterpreting(false)
+    setIsUnsaved(false)
     setRevealMode('instant')
     setResult(savedResult)
     setDisplayedResult(savedResult)
@@ -275,28 +415,87 @@ function App() {
     })
   }
 
-  // 입력·결과·선택 상태를 비워서 새 사주를 처음부터 적을 수 있게 합니다.
+  // 입력·결과·선택 상태를 비우고, 프로필 기본 정보로 새 사주를 시작합니다.
   function handleNewSaju() {
+    const alreadyOnNewPage = (
+      !selectedId
+      && !isEditing
+      && !isReinterpreting
+      && !isUnsaved
+      && !result
+      && !isLoading
+      && !isTyping
+    )
+
+    if (alreadyOnNewPage) {
+      setErrorMessage('')
+      // 같은 문구라도 다시 누르면 토스트가 다시 뜨도록 잠깐 비웁니다.
+      setStatusMessage('')
+      requestAnimationFrame(() => {
+        setStatusMessage('이미 새 사주 작성 화면입니다')
+        document.getElementById('name')?.focus()
+      })
+      return
+    }
+
     setSelectedId(null)
-    setName('')
-    setBirthDate('')
-    setBirthTime('')
-    setGender('')
-    setCalendarType('')
     setResult('')
     setDisplayedResult('')
     setIsTyping(false)
     setIsLoading(false)
     setIsEditing(false)
     setIsReinterpreting(false)
+    setIsUnsaved(false)
     setErrorMessage('')
-    setStatusMessage('')
     setShowFieldErrors(false)
     setRevealMode('type')
+    applyProfileToForm(profile)
+    setStatusMessage('새 사주 작성 화면으로 이동했어요')
 
     requestAnimationFrame(() => {
       document.getElementById('name')?.focus()
     })
+  }
+
+  // users 테이블에 프로필을 저장합니다. (첫 설정은 insert, 수정은 upsert)
+  async function handleSaveProfile(form) {
+    if (!user?.id) return
+
+    setIsSavingProfile(true)
+    setProfileError('')
+
+    const payload = {
+      id: user.id,
+      name: form.name.trim(),
+      birth_date: form.birthDate,
+      birth_time: form.birthTime,
+      gender: form.gender,
+      calendar_type: form.calendarType,
+      updated_at: new Date().toISOString(),
+    }
+
+    const { data, error } = await supabase
+      .from('users')
+      .upsert(payload, { onConflict: 'id' })
+      .select('id, name, birth_date, birth_time, gender, calendar_type, created_at, updated_at')
+      .single()
+
+    setIsSavingProfile(false)
+
+    if (error) {
+      setProfileError(`프로필 저장에 실패했습니다: ${error.message}`)
+      return
+    }
+
+    const wasSetup = profileModal === 'setup'
+    setProfile(data)
+    applyProfileToForm(data)
+    setProfileModal(null)
+    setStatusMessage('프로필이 저장되었습니다')
+
+    if (wasSetup) {
+      await loadReadings()
+    }
   }
 
   // Google OAuth로 로그인합니다. Supabase 대시보드에 등록된 redirect URL로 돌아옵니다.
@@ -330,7 +529,25 @@ function App() {
       return
     }
 
-    handleNewSaju()
+    setProfile(null)
+    setProfileModal(null)
+    setProfileError('')
+    setSelectedId(null)
+    setName('')
+    setBirthDate('')
+    setBirthTime('')
+    setGender('')
+    setCalendarType('')
+    setResult('')
+    setDisplayedResult('')
+    setIsTyping(false)
+    setIsLoading(false)
+    setIsEditing(false)
+    setIsReinterpreting(false)
+    setIsUnsaved(false)
+    setShowFieldErrors(false)
+    setRevealMode('type')
+    setReadings([])
     setStatusMessage('로그아웃되었습니다')
   }
 
@@ -364,6 +581,7 @@ function App() {
     setResult('')
     setDisplayedResult('')
     setIsTyping(false)
+    setIsUnsaved(false)
     setErrorMessage('')
     setStatusMessage('')
     setShowFieldErrors(false)
@@ -412,6 +630,7 @@ function App() {
     setSelectedId(data.id)
     setIsEditing(false)
     setIsReinterpreting(false)
+    setIsUnsaved(false)
     setStatusMessage('사주가 저장되었습니다')
     return data
   }
@@ -441,6 +660,7 @@ function App() {
     setSelectedId(data.id)
     setIsEditing(false)
     setIsReinterpreting(false)
+    setIsUnsaved(false)
     setStatusMessage('사주가 수정되었습니다')
     return data
   }
@@ -484,11 +704,14 @@ function App() {
     setStatusMessage('정보가 수정되었습니다')
   }
 
-  // Delete: 선택한 사주 기록을 삭제합니다.
-  async function handleDeleteReading() {
-    if (!selectedId) return
+  // Delete: 선택한 사주 기록(또는 목록에서 고른 기록)을 삭제합니다.
+  async function handleDeleteReading(reading = null) {
+    const target = reading || readings.find((item) => item.id === selectedId)
+    if (!target?.id) return
 
-    const confirmed = window.confirm(`${name || '이 사주'} 기록을 삭제할까요?`)
+    setContextMenu(null)
+
+    const confirmed = window.confirm(`${target.name || '이 사주'} 기록을 삭제할까요?`)
     if (!confirmed) return
 
     setIsSaving(true)
@@ -497,7 +720,7 @@ function App() {
     const { error } = await supabase
       .from('saju_readings')
       .delete()
-      .eq('id', selectedId)
+      .eq('id', target.id)
 
     setIsSaving(false)
 
@@ -506,17 +729,52 @@ function App() {
       return
     }
 
-    setReadings((prev) => prev.filter((item) => item.id !== selectedId))
-    handleNewSaju()
+    setReadings((prev) => prev.filter((item) => item.id !== target.id))
+
+    if (selectedId === target.id) {
+      handleNewSaju()
+    }
+
     setStatusMessage('사주가 삭제되었습니다')
   }
 
-  // 해석 결과를 Create 또는 Update로 저장합니다.
+  // 기록 항목을 우클릭하면 삭제 메뉴를 띄웁니다.
+  function handleReadingContextMenu(event, reading) {
+    event.preventDefault()
+    if (isBusy) return
+
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      reading,
+    })
+  }
+
+  // 해석 결과를 Create 또는 Update로 저장합니다. (저장하기 버튼에서만 호출)
   async function saveReading(outputText, targetId = null) {
     if (targetId) {
       return updateReadingResult(outputText, targetId)
     }
     return createReading(outputText)
+  }
+
+  // 사용자가 저장하기를 눌렀을 때만 DB에 올립니다.
+  async function handleSaveReading() {
+    if (!canSaveResult) return
+
+    if (!isFormComplete) {
+      setShowFieldErrors(true)
+      setErrorMessage('이름, 생년월일, 태어난 시간, 성별, 양력/음력을 모두 입력해 주세요.')
+      return
+    }
+
+    setIsSaving(true)
+    setErrorMessage('')
+
+    const targetId = isReinterpreting ? selectedId : null
+    await saveReading(result, targetId)
+
+    setIsSaving(false)
   }
 
   // 버튼 클릭 시 Gemini Interactions API를 호출합니다.
@@ -565,6 +823,7 @@ function App() {
     setResult('')
     setDisplayedResult('')
     setIsTyping(false)
+    setIsUnsaved(false)
     if (!updateTargetId) {
       setSelectedId(null)
     }
@@ -607,9 +866,9 @@ function App() {
       const finalText = outputText || '해석 결과를 받지 못했습니다.'
       setResult(finalText)
 
-      // 해석이 나온 뒤에만, 입력값과 결과를 함께 저장합니다.
+      // 자동 저장하지 않고, 저장하기 버튼을 누를 수 있게만 표시합니다.
       if (outputText) {
-        await saveReading(finalText, updateTargetId)
+        setIsUnsaved(true)
       }
     } catch (error) {
       setErrorMessage(error.message)
@@ -665,8 +924,30 @@ function App() {
     )
   }
 
+  if (profileLoading && !profile) {
+    return (
+      <main className="page page-auth">
+        <section className="sheet auth-sheet">
+          <p className="sheet-eyebrow">四柱</p>
+          <h1>사주미麗</h1>
+          <p className="sheet-lead">프로필을 불러오는 중...</p>
+        </section>
+      </main>
+    )
+  }
+
   return (
     <main className="page">
+      {statusMessage && (
+        <div
+          className={`toast${toastLeaving ? ' is-leaving' : ''}`}
+          role="status"
+          aria-live="polite"
+        >
+          {statusMessage}
+        </div>
+      )}
+
       <aside className="history-sidebar" aria-label="저장된 사주 목록">
         <div className="auth-card">
           <div className="auth-user">
@@ -678,18 +959,43 @@ function App() {
               </span>
             )}
             <div className="auth-user-text">
-              <p className="auth-user-label">로그인</p>
+              <p className="auth-user-label">내 프로필</p>
               <p className="auth-user-name">{userLabel}</p>
+              {profile && (
+                <p className="auth-user-meta">
+                  {[
+                    formatDisplayDate(profile.birth_date),
+                    formatBirthTime(profile.birth_time),
+                    profile.gender,
+                    profile.calendar_type,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
+              )}
             </div>
           </div>
-          <button
-            type="button"
-            className="auth-logout"
-            onClick={handleLogout}
-            disabled={authBusy}
-          >
-            로그아웃
-          </button>
+          <div className="auth-card-actions">
+            <button
+              type="button"
+              className="auth-profile-edit"
+              onClick={() => {
+                setProfileError('')
+                setProfileModal('edit')
+              }}
+              disabled={isBusy || profileLoading || !profile}
+            >
+              프로필 수정
+            </button>
+            <button
+              type="button"
+              className="auth-logout"
+              onClick={handleLogout}
+              disabled={authBusy}
+            >
+              로그아웃
+            </button>
+          </div>
         </div>
 
         <p className="history-eyebrow">記錄</p>
@@ -718,11 +1024,21 @@ function App() {
                 <button
                   type="button"
                   className={`history-item${selectedId === reading.id ? ' is-active' : ''}`}
-                  onClick={() => handleSelectReading(reading)}
+                  onClick={() => {
+                    setContextMenu(null)
+                    handleSelectReading(reading)
+                  }}
+                  onContextMenu={(event) => handleReadingContextMenu(event, reading)}
+                  title="우클릭하면 삭제할 수 있습니다"
                 >
-                  <span className="history-item-name">{reading.name}</span>
+                  <span className="history-item-top">
+                    <span className="history-item-name">{reading.name}</span>
+                    <span className="history-item-birth">
+                      {formatDisplayDate(reading.birth_date)}
+                    </span>
+                  </span>
                   <span className="history-item-meta">
-                    {formatDisplayDate(reading.birth_date)}
+                    {formatDisplayDateTime(reading.created_at)}
                   </span>
                 </button>
               </li>
@@ -730,6 +1046,26 @@ function App() {
           </ul>
         )}
       </aside>
+
+      {contextMenu && (
+        <div
+          className="context-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          role="menu"
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            type="button"
+            className="context-menu-item context-menu-danger"
+            role="menuitem"
+            disabled={isBusy}
+            onClick={() => handleDeleteReading(contextMenu.reading)}
+          >
+            삭제
+          </button>
+        </div>
+      )}
 
       <section className={`sheet${isViewingSaved ? ' is-viewing' : ''}`}>
         <header className="sheet-header">
@@ -742,7 +1078,9 @@ function App() {
                 ? '저장본 정보를 수정하고 있습니다'
                 : isReinterpreting
                   ? '같은 기록을 다시 해석해 덮어씁니다'
-                  : '생년월일을 적으면 명식을 풀어 드립니다'}
+                  : profile
+                    ? '프로필 정보로 바로 사주를 볼 수 있습니다'
+                    : '생년월일을 적으면 명식을 풀어 드립니다'}
           </p>
         </header>
 
@@ -787,7 +1125,7 @@ function App() {
         {isReinterpreting && (
           <div className="mode-banner" role="status">
             <p className="mode-banner-text">
-              다시 해석하면 <strong>기존 기록이 새 결과로 덮어써집니다.</strong>
+              다시 해석한 뒤 <strong>저장하기</strong>를 눌러야 기존 기록이 덮어써집니다.
             </p>
             <div className="mode-banner-actions">
               <button
@@ -842,7 +1180,10 @@ function App() {
               id="birthTime"
               type="time"
               value={birthTime}
-              onChange={(e) => setBirthTime(e.target.value)}
+              onChange={(e) => {
+                setBirthTime(e.target.value)
+                closeTimePickerIfComplete(e)
+              }}
               disabled={formLocked}
             />
           </div>
@@ -934,7 +1275,6 @@ function App() {
           </button>
         )}
 
-        {statusMessage && <p className="status">{statusMessage}</p>}
         {errorMessage && <p className="error">{errorMessage}</p>}
 
         {/* 해석 중에는 결과 자리에 스켈레톤을 보여 줍니다. */}
@@ -977,7 +1317,37 @@ function App() {
             </div>
           </div>
         )}
+
+        {isUnsaved && !isLoading && result && !canSaveResult && isTyping && (
+          <p className="status">작성이 끝나면 저장할 수 있습니다</p>
+        )}
+
+        {canSaveResult && (
+          <button
+            className="submit save-btn"
+            type="button"
+            onClick={handleSaveReading}
+            disabled={isBusy}
+          >
+            {saveLabel}
+          </button>
+        )}
       </section>
+
+      <ProfileModal
+        open={profileModal === 'setup' || profileModal === 'edit' || needsProfileSetup}
+        mode={profileModal === 'edit' ? 'edit' : 'setup'}
+        initialValues={profileFormValues}
+        isSaving={isSavingProfile}
+        errorMessage={profileError}
+        onSave={handleSaveProfile}
+        onClose={() => {
+          if (profileModal === 'edit') {
+            setProfileModal(null)
+            setProfileError('')
+          }
+        }}
+      />
     </main>
   )
 }
