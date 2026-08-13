@@ -2,6 +2,14 @@ import { useState, useEffect } from 'react'
 import './App.css'
 import { supabase } from './lib/supabase'
 import ProfileModal from './ProfileModal'
+import SajuResultCard from './SajuResultCard'
+import {
+  formatBirthTime,
+  formatDisplayDate,
+  formatDisplayDateTime,
+  normalizeResultText,
+  shareReading,
+} from './sajuFormat'
 
 // Gemini에게 역할을 알려 주는 시스템 프롬프트입니다.
 // 실제 생년월일 데이터는 아래 handleAskSaju에서 따로 붙여 보냅니다.
@@ -25,45 +33,12 @@ const SAJU_SYSTEM_PROMPT = `return only Korean.
 답변은 한국어로만 작성하세요.
 또한 정확한 해석을 해야 하므로 결과 확인을 할 때마다 내용이 지속적으로 바뀌면 안됩니다.`
 
-function formatBirthTime(value) {
-  if (!value) return ''
-  return String(value).slice(0, 5)
-}
-
 // 시·분이 모두 채워지면 time 선택 창을 닫습니다. (date input과 비슷한 사용감)
 function closeTimePickerIfComplete(event) {
   const value = event.target.value
   if (/^\d{2}:\d{2}/.test(value)) {
     event.target.blur()
   }
-}
-
-// DB/모델에서 온 줄바꿈을 화면용으로 정리합니다.
-function normalizeResultText(text) {
-  return String(text || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\\n/g, '\n')
-}
-
-function formatDisplayDate(dateString) {
-  if (!dateString) return ''
-  const [year, month, day] = String(dateString).split('-')
-  if (!year || !month || !day) return dateString
-  return `${year}.${month}.${day}`
-}
-
-// 사주를 본(저장한) 시각을 보기 좋게 표시합니다.
-function formatDisplayDateTime(value) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hour = String(date.getHours()).padStart(2, '0')
-  const minute = String(date.getMinutes()).padStart(2, '0')
-  return `${year}.${month}.${day} ${hour}:${minute}`
 }
 
 function App() {
@@ -133,6 +108,7 @@ function App() {
       ? '수정 내용 저장하기'
       : '저장하기'
   const canSaveResult = Boolean(result) && isUnsaved && !isLoading && !isEditing && !isTyping
+  const canShareResult = Boolean(result) && !isLoading && !isTyping && (Boolean(selectedId) || canSaveResult)
 
   // 구글 로그인 세션을 확인하고, 이후 변화를 계속 듣습니다.
   useEffect(() => {
@@ -322,52 +298,6 @@ function App() {
     // 컴포넌트가 사라지거나, 새 해석이 시작되면 타이머를 끕니다.
     return () => clearInterval(intervalId)
   }, [result, revealMode])
-
-  // # 제목 줄은 굵게, **글자**도 굵게 보여 주고, #과 * 기호는 화면에 남기지 않습니다.
-  // showCursor가 true이면 마지막 줄 끝에 깜빡이는 커서를 붙입니다.
-  function renderSajuResult(text, showCursor = false) {
-    const lines = text.split('\n')
-
-    return lines.map((line, index) => {
-      const isLastLine = index === lines.length - 1
-      const cursor = showCursor && isLastLine
-        ? <span className="typing-cursor" aria-hidden="true" />
-        : null
-      const headingMatch = line.match(/^\s*#{1,6}\s*(.*)$/)
-
-      if (headingMatch) {
-        return (
-          <p key={index} className="result-heading">
-            {headingMatch[1].replace(/\*/g, '')}
-            {cursor}
-          </p>
-        )
-      }
-
-      if (line.trim() === '') {
-        return (
-          <p key={index} className="result-line">
-            {cursor || <br />}
-          </p>
-        )
-      }
-
-      // **이 글자**처럼 별표 두 개로 감싼 부분만 굵게 만듭니다.
-      const parts = line.split(/(\*\*[^*]+\*\*)/g)
-      return (
-        <p key={index} className="result-line">
-          {parts.map((part, partIndex) => {
-            const boldMatch = part.match(/^\*\*([^*]+)\*\*$/)
-            if (boldMatch) {
-              return <strong key={partIndex}>{boldMatch[1]}</strong>
-            }
-            return part.replace(/\*/g, '')
-          })}
-          {cursor}
-        </p>
-      )
-    })
-  }
 
   // 생년월일로 만 나이를 계산합니다.
   function getKoreanAge(dateString) {
@@ -750,12 +680,40 @@ function App() {
     })
   }
 
-  // 해석 결과를 Create 또는 Update로 저장합니다. (저장하기 버튼에서만 호출)
+  // 해석 결과를 Create 또는 Update로 저장합니다.
   async function saveReading(outputText, targetId = null) {
     if (targetId) {
       return updateReadingResult(outputText, targetId)
     }
     return createReading(outputText)
+  }
+
+  // 저장된 결과의 공유 링크를 만들거나, 아직이면 저장한 뒤 공유합니다.
+  async function handleShareReading() {
+    if (!canShareResult) return
+
+    let readingId = selectedId
+
+    if (canSaveResult) {
+      setIsSaving(true)
+      setErrorMessage('')
+      const saved = await saveReading(result, isReinterpreting ? selectedId : null)
+      setIsSaving(false)
+      readingId = saved?.id
+      if (!readingId) return
+    }
+
+    if (!readingId) {
+      setErrorMessage('저장된 사주만 공유할 수 있습니다. 먼저 저장해 주세요.')
+      return
+    }
+
+    const outcome = await shareReading({ id: readingId, name })
+    if (outcome === 'copied') {
+      setStatusMessage('공유 링크를 복사했습니다')
+    } else if (outcome === 'failed') {
+      setErrorMessage('링크를 복사하지 못했습니다. 잠시 후 다시 시도해 주세요.')
+    }
   }
 
   // 사용자가 저장하기를 눌렀을 때만 DB에 올립니다.
@@ -1090,6 +1048,9 @@ function App() {
               <strong>{name}</strong>님의 저장본입니다. 수정·다시 해석·삭제가 가능합니다.
             </p>
             <div className="mode-banner-actions">
+              <button type="button" className="ghost-btn" onClick={handleShareReading} disabled={isBusy}>
+                공유하기
+              </button>
               <button type="button" className="ghost-btn" onClick={handleStartEdit} disabled={isBusy}>
                 정보 수정
               </button>
@@ -1294,28 +1255,20 @@ function App() {
 
         {/* displayedResult가 늘어날 때마다 화면에 이어서 작성되는 것처럼 보입니다. */}
         {!isLoading && displayedResult && (
-          <div
-            id="saju-result"
+          <SajuResultCard
             key={selectedId || `live-${result.slice(0, 24)}`}
-            className={`result${revealMode === 'instant' || !isTyping ? ' result-instant' : ''}`}
-          >
-            <div className="result-meta">
-              <p className="result-meta-name">{name || '이름 없음'}님의 명식</p>
-              <p className="result-meta-detail">
-                {[
-                  formatDisplayDate(birthDate),
-                  formatBirthTime(birthTime),
-                  gender,
-                  calendarType,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </p>
-            </div>
-            <div className="result-body">
-              {renderSajuResult(displayedResult, isTyping)}
-            </div>
-          </div>
+            name={name}
+            birthDate={birthDate}
+            birthTime={birthTime}
+            gender={gender}
+            calendarType={calendarType}
+            displayedResult={displayedResult}
+            isTyping={isTyping}
+            revealInstant={revealMode === 'instant' || !isTyping}
+            showShare={canShareResult}
+            onShare={handleShareReading}
+            shareBusy={isSaving}
+          />
         )}
 
         {isUnsaved && !isLoading && result && !canSaveResult && isTyping && (
