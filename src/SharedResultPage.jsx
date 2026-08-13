@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { trackEvent } from './lib/analytics'
 import { supabase } from './lib/supabase'
 import SajuResultCard from './SajuResultCard'
 import {
@@ -49,6 +50,7 @@ function SharedResultPage({ shareId }) {
         ...row,
         result: normalizeResultText(row.result),
       })
+      trackEvent('view_shared_result', { share_id: shareId })
       setIsLoading(false)
     }
 
@@ -101,6 +103,7 @@ function SharedResultPage({ shareId }) {
     setShareBusy(true)
     const outcome = await shareReading({ id: reading.id, name: reading.name })
     setShareBusy(false)
+    trackEvent('share', { method: outcome, context: 'shared_page' })
     if (outcome === 'copied') {
       setStatusMessage('공유 링크를 복사했습니다')
     } else if (outcome === 'failed') {
@@ -160,7 +163,11 @@ function SharedResultPage({ shareId }) {
 
         {errorMessage && <p className="error">{errorMessage}</p>}
 
-        <a className="shared-home" href="/">
+        <a
+          className="shared-home"
+          href="/"
+          onClick={() => trackEvent('shared_cta_click', { has_reading: Boolean(reading) })}
+        >
           {reading ? '나도 사주 보러 가기' : '홈으로'}
         </a>
       </section>

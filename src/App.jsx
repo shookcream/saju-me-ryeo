@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import './App.css'
+import { trackEvent } from './lib/analytics'
 import { supabase } from './lib/supabase'
 import ProfileModal from './ProfileModal'
 import SajuResultCard from './SajuResultCard'
@@ -123,9 +124,12 @@ function App() {
       setAuthLoading(false)
     })
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null)
       setAuthLoading(false)
+      if (event === 'SIGNED_IN') {
+        trackEvent('login', { method: 'google' })
+      }
     })
 
     return () => {
@@ -317,6 +321,7 @@ function App() {
 
   // 사이드바에서 이름을 누르면, 그 기록의 입력값과 사주 결과를 바로 예쁘게 불러옵니다.
   function handleSelectReading(reading) {
+    trackEvent('select_history', { reading_id: reading.id })
     const savedResult = normalizeResultText(reading.result)
     setSelectedId(reading.id)
     setName(reading.name || '')
@@ -368,6 +373,7 @@ function App() {
       return
     }
 
+    trackEvent('new_saju')
     setSelectedId(null)
     setResult('')
     setDisplayedResult('')
@@ -418,6 +424,7 @@ function App() {
     }
 
     const wasSetup = profileModal === 'setup'
+    trackEvent('save_profile', { mode: wasSetup ? 'setup' : 'edit' })
     setProfile(data)
     applyProfileToForm(data)
     setProfileModal(null)
@@ -430,6 +437,7 @@ function App() {
 
   // Google OAuth로 로그인합니다. Supabase 대시보드에 등록된 redirect URL로 돌아옵니다.
   async function handleGoogleLogin() {
+    trackEvent('login_click', { method: 'google' })
     setAuthBusy(true)
     setErrorMessage('')
 
@@ -443,6 +451,7 @@ function App() {
     if (error) {
       setAuthBusy(false)
       setErrorMessage(`구글 로그인에 실패했습니다: ${error.message}`)
+      trackEvent('login_error', { method: 'google' })
     }
   }
 
@@ -458,6 +467,8 @@ function App() {
       setErrorMessage(`로그아웃에 실패했습니다: ${error.message}`)
       return
     }
+
+    trackEvent('logout')
 
     setProfile(null)
     setProfileModal(null)
@@ -506,6 +517,7 @@ function App() {
 
   // 저장본 내용을 유지한 채 다시 해석해 같은 기록을 덮어쓸 준비를 합니다. (Update)
   function handleReinterpret() {
+    trackEvent('reinterpret_start')
     setIsEditing(false)
     setIsReinterpreting(true)
     setResult('')
@@ -525,6 +537,7 @@ function App() {
   // 타이핑 애니메이션을 건너뛰고 전체 결과를 바로 보여 줍니다.
   function handleSkipTyping() {
     if (!result || !isTyping) return
+    trackEvent('skip_typing')
     setRevealMode('instant')
     setDisplayedResult(result)
     setIsTyping(false)
@@ -632,6 +645,7 @@ function App() {
     setIsEditing(false)
     setShowFieldErrors(false)
     setStatusMessage('정보가 수정되었습니다')
+    trackEvent('save_info')
   }
 
   // Delete: 선택한 사주 기록(또는 목록에서 고른 기록)을 삭제합니다.
@@ -659,6 +673,7 @@ function App() {
       return
     }
 
+    trackEvent('delete_reading')
     setReadings((prev) => prev.filter((item) => item.id !== target.id))
 
     if (selectedId === target.id) {
@@ -697,10 +712,12 @@ function App() {
     if (canSaveResult) {
       setIsSaving(true)
       setErrorMessage('')
+      const saveMode = isReinterpreting ? 'update' : 'create'
       const saved = await saveReading(result, isReinterpreting ? selectedId : null)
       setIsSaving(false)
       readingId = saved?.id
       if (!readingId) return
+      trackEvent('save_reading', { mode: saveMode, via: 'share' })
     }
 
     if (!readingId) {
@@ -709,6 +726,7 @@ function App() {
     }
 
     const outcome = await shareReading({ id: readingId, name })
+    trackEvent('share', { method: outcome, context: 'app' })
     if (outcome === 'copied') {
       setStatusMessage('공유 링크를 복사했습니다')
     } else if (outcome === 'failed') {
@@ -730,7 +748,10 @@ function App() {
     setErrorMessage('')
 
     const targetId = isReinterpreting ? selectedId : null
-    await saveReading(result, targetId)
+    const saved = await saveReading(result, targetId)
+    if (saved) {
+      trackEvent('save_reading', { mode: targetId ? 'update' : 'create' })
+    }
 
     setIsSaving(false)
   }
@@ -773,7 +794,9 @@ function App() {
 위 정보를 바탕으로 사주 기본 차트를 세우고 해석해 주세요.`
 
     const updateTargetId = isReinterpreting ? selectedId : null
+    const askMode = updateTargetId ? 'reinterpret' : 'new'
 
+    trackEvent('saju_ask', { mode: askMode })
     setIsLoading(true)
     setErrorMessage('')
     setStatusMessage('')
@@ -827,9 +850,13 @@ function App() {
       // 자동 저장하지 않고, 저장하기 버튼을 누를 수 있게만 표시합니다.
       if (outputText) {
         setIsUnsaved(true)
+        trackEvent('saju_complete', { mode: askMode })
+      } else {
+        trackEvent('saju_error', { mode: askMode, reason: 'empty_output' })
       }
     } catch (error) {
       setErrorMessage(error.message)
+      trackEvent('saju_error', { mode: askMode, reason: 'request_failed' })
     } finally {
       // 성공이든 실패든, 로딩은 끝냅니다.
       setIsLoading(false)
