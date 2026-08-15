@@ -1,5 +1,5 @@
-import { formatBirthTime, formatDisplayDate } from './sajuFormat'
-import Ryeongi from './Ryeongi'
+import { formatBirthTime, formatDisplayDate } from '../../lib/sajuFormat'
+import Ryeongi from '../ui/Ryeongi'
 
 function renderSajuResult(text, showCursor = false) {
   const lines = text.split('\n')

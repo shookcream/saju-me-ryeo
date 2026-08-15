@@ -111,13 +111,29 @@
 
 .ryeongi-stage--title {
   position: absolute;
-  top: -100px;
-  right: -120px;
-  width: 136px;
+  left: -8px;
+  bottom: -18px;
+  width: 118px;
   margin: 0;
+  pointer-events: none;
+  z-index: 1;
 }
 
 .ryeongi-stage--title .ryeongi {
+  width: 100%;
+}
+
+.ryeongi-stage--titleTop {
+  position: absolute;
+  top: -52px;
+  right: -12px;
+  width: 128px;
+  margin: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.ryeongi-stage--titleTop .ryeongi {
   width: 100%;
 }
 
@@ -497,6 +513,7 @@
 }
 
 .sheet-header {
+  position: relative;
   margin-bottom: 32px;
 }
 
@@ -517,12 +534,12 @@
   letter-spacing: 0.18em;
 }
 
-.sheet-title-row {
+.sheet-title-block {
   position: relative;
   display: inline-block;
-  margin-top: 42px;
-  padding-right: 44px;
-  transform: translateX(24px);
+  max-width: 100%;
+  padding: 48px 100px 52px 100px;
+  text-align: center;
 }
 
 .sheet-lead {
@@ -623,6 +640,7 @@
 .field.is-invalid input[type='text'],
 .field.is-invalid input[type='date'],
 .field.is-invalid input[type='time'],
+.field.is-invalid select,
 .field.is-invalid .choice {
   border-color: #a05a45;
 }
@@ -642,25 +660,51 @@
 
 .field input[type='text'],
 .field input[type='date'],
-.field input[type='time'] {
+.field input[type='time'],
+.field select {
   width: 100%;
   height: 46px;
   padding: 0 14px;
   border: 1px solid #b7ab98;
   background-color: #fbf7ef;
   color: #2a241c;
+  font: inherit;
+}
+
+.birth-date-fields {
+  display: grid;
+  grid-template-columns: 1.2fr 0.9fr 0.9fr;
+  gap: 8px;
+}
+
+.birth-date-part {
+  min-width: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .field input::placeholder {
   color: #9a8f7e;
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus {
   outline: 2px solid #2a241c;
   outline-offset: 1px;
 }
 
 .field input:disabled,
+.field select:disabled,
 .choice:has(input:disabled) {
   opacity: 0.72;
   cursor: not-allowed;
@@ -1067,13 +1111,18 @@
   }
 
   .ryeongi-stage--title {
-    top: -52px;
-    right: -108px;
-    width: 112px;
+    left: -4px;
+    bottom: -12px;
+    width: 96px;
   }
 
-  .sheet-title-row {
-    margin-top: 26px;
-    padding-right: 56px;
+  .ryeongi-stage--titleTop {
+    top: -48px;
+    right: -12px;
+    width: 104px;
+  }
+
+  .sheet-title-block {
+    padding: 36px 80px 44px 80px;
   }
 }

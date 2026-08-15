@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
-import { trackEvent } from './lib/analytics'
-import { supabase } from './lib/supabase'
-import Ryeongi from './Ryeongi'
-import SajuResultCard from './SajuResultCard'
+import { trackEvent } from '../lib/analytics'
+import { supabase } from '../lib/supabase'
+import Ryeongi from '../components/ui/Ryeongi'
+import SajuResultCard from '../components/result/SajuResultCard'
+import ResultSkeleton from '../components/result/ResultSkeleton'
+import Toast from '../components/ui/Toast'
 import {
   SHARE_ID_PATTERN,
   normalizeResultText,
   shareReading,
-} from './sajuFormat'
-import './App.css'
+} from '../lib/sajuFormat'
+import '../styles/app.css'
 
 function SharedResultPage({ shareId }) {
   const [reading, setReading] = useState(null)
@@ -115,13 +117,7 @@ function SharedResultPage({ shareId }) {
   return (
     <main className="page page-shared">
       {statusMessage && (
-        <div
-          className={`toast${toastLeaving ? ' is-leaving' : ''}`}
-          role="status"
-          aria-live="polite"
-        >
-          {statusMessage}
-        </div>
+        <Toast message={statusMessage} leaving={toastLeaving} />
       )}
 
       <section className="sheet sheet-shared">
@@ -138,14 +134,7 @@ function SharedResultPage({ shareId }) {
         </header>
 
         {isLoading && (
-          <div className="result result-skeleton" aria-busy="true" aria-live="polite">
-            <Ryeongi pose="loading" />
-            <div className="skeleton-line skeleton-heading" />
-            <div className="skeleton-line skeleton-body" />
-            <div className="skeleton-line skeleton-body" />
-            <div className="skeleton-line skeleton-body short" />
-            <p className="skeleton-label">명식을 불러오는 중...</p>
-          </div>
+          <ResultSkeleton label="명식을 불러오는 중..." />
         )}
 
         {!isLoading && !reading && (

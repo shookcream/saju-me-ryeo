@@ -1,9 +1,10 @@
 const POSES = {
-  login: '/assets/령이_3.png',
-  loading: '/assets/령이_2.png',
-  result: '/assets/령이_5.png',
-  missing: '/assets/령이_4.png',
-  title: '/assets/령이_6.png',
+  login: '/assets/images/령이_3.png',
+  loading: '/assets/images/령이_2.png',
+  result: '/assets/images/령이_5.png',
+  missing: '/assets/images/령이_4.png',
+  title: '/assets/images/령이_3.png',
+  titleTop: '/assets/images/령이_6.png',
 }
 
 const ALTS = {
@@ -11,7 +12,8 @@ const ALTS = {
   loading: '명식을 풀어 적고 있는 령이',
   result: '기쁘게 뛰어가는 령이',
   missing: '두 손을 모은 령이',
-  title: '책상 위에 앉아 있는 령이',
+  title: '편안하게 앉아 있는 령이',
+  titleTop: '책상 위에 앉아 있는 령이',
 }
 
 function Ryeongi({ pose, className = '' }) {

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import BirthDateFields from '../form/BirthDateFields'
+import { closeTimePickerIfComplete } from '../../utils/timePicker'
 
 const EMPTY_PROFILE = {
   name: '',
@@ -6,14 +8,6 @@ const EMPTY_PROFILE = {
   birthTime: '',
   gender: '',
   calendarType: '',
-}
-
-// 시·분이 모두 채워지면 time 선택 창을 닫습니다.
-function closeTimePickerIfComplete(event) {
-  const value = event.target.value
-  if (/^\d{2}:\d{2}/.test(value)) {
-    event.target.blur()
-  }
 }
 
 function ProfileModal({
@@ -101,13 +95,11 @@ function ProfileModal({
 
           <div className={fieldClass(form.birthDate)}>
             <label className="field-label" htmlFor="profile-birthDate">생년월일</label>
-            <input
+            <BirthDateFields
               id="profile-birthDate"
-              type="date"
               value={form.birthDate}
-              onChange={(e) => updateField('birthDate', e.target.value)}
+              onChange={(next) => updateField('birthDate', next)}
               disabled={isSaving}
-              max={new Date().toISOString().slice(0, 10)}
             />
           </div>
 
