@@ -44,7 +44,7 @@ function ProfileModal({
 
   const isSetup = mode === 'setup'
   const isComplete = Boolean(
-    form.name && form.birthDate && form.birthTime && form.gender && form.calendarType
+    form.name && form.birthDate && form.gender && form.calendarType
   )
 
   function fieldClass(value) {
@@ -111,8 +111,8 @@ function ProfileModal({
             />
           </div>
 
-          <div className={fieldClass(form.birthTime)}>
-            <label className="field-label" htmlFor="profile-birthTime">태어난 시간</label>
+          <div className="field">
+            <label className="field-label" htmlFor="profile-birthTime">태어난 시간 (선택)</label>
             <input
               id="profile-birthTime"
               type="time"
@@ -123,6 +123,7 @@ function ProfileModal({
               }}
               disabled={isSaving}
             />
+            <p className="field-hint">모르면 비워 두세요. 시주 없이 해석합니다.</p>
           </div>
 
           <div className={fieldClass(form.gender)}>

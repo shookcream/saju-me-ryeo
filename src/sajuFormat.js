@@ -3,6 +3,10 @@ export function formatBirthTime(value) {
   return String(value).slice(0, 5)
 }
 
+export function toStoredBirthTime(value) {
+  return formatBirthTime(value) || null
+}
+
 export function normalizeResultText(text) {
   return String(text || '')
     .replace(/\r\n/g, '\n')

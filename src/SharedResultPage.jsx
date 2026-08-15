@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { trackEvent } from './lib/analytics'
 import { supabase } from './lib/supabase'
+import Ryeongi from './Ryeongi'
 import SajuResultCard from './SajuResultCard'
 import {
   SHARE_ID_PATTERN,
@@ -138,12 +139,17 @@ function SharedResultPage({ shareId }) {
 
         {isLoading && (
           <div className="result result-skeleton" aria-busy="true" aria-live="polite">
+            <Ryeongi pose="loading" />
             <div className="skeleton-line skeleton-heading" />
             <div className="skeleton-line skeleton-body" />
             <div className="skeleton-line skeleton-body" />
             <div className="skeleton-line skeleton-body short" />
             <p className="skeleton-label">명식을 불러오는 중...</p>
           </div>
+        )}
+
+        {!isLoading && !reading && (
+          <Ryeongi pose="missing" />
         )}
 
         {!isLoading && reading && (

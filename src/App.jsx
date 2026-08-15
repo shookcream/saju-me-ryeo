@@ -3,6 +3,7 @@ import './App.css'
 import { trackEvent } from './lib/analytics'
 import { supabase } from './lib/supabase'
 import ProfileModal from './ProfileModal'
+import Ryeongi from './Ryeongi'
 import SajuResultCard from './SajuResultCard'
 import {
   formatBirthTime,
@@ -10,6 +11,7 @@ import {
   formatDisplayDateTime,
   normalizeResultText,
   shareReading,
+  toStoredBirthTime,
 } from './sajuFormat'
 
 // Gemini에게 역할을 알려 주는 시스템 프롬프트입니다.
@@ -31,6 +33,7 @@ const SAJU_SYSTEM_PROMPT = `return only Korean.
 답변 끝에서 사용자에게 되묻거나, 연애운·진로 등 추가 질문을 유도하지 마세요.
 
 먼저 제공된 생년월일·시간·성별·양력/음력을 바탕으로 사주 명식(년주, 월주, 일주, 시주), 오행 분포, 십신, 지장간, 십이운성, 12신살, 공망, 대운·세운을 세운 뒤 위 규칙대로 해석하세요.
+태어난 시간이 없거나 '모름'이면 시주를 추정하거나 임의의 시간을 가정하지 마세요. 년주·월주·일주만으로 해석하고, 시주가 없어 시간 관련 해석은 제한적이라는 점을 짧게 밝히세요.
 답변은 한국어로만 작성하세요.
 또한 정확한 해석을 해야 하므로 결과 확인을 할 때마다 내용이 지속적으로 바뀌면 안됩니다.`
 
@@ -79,7 +82,7 @@ function App() {
 
   // 저장본을 그냥 보고 있을 때만 입력칸을 잠급니다.
   const isViewingSaved = Boolean(selectedId) && !isEditing && !isReinterpreting && !isLoading && !isTyping && !isUnsaved
-  const isFormComplete = Boolean(name && birthDate && birthTime && gender && calendarType)
+  const isFormComplete = Boolean(name && birthDate && gender && calendarType)
   const isBusy = isLoading || isTyping || isSaving || authBusy || isSavingProfile
   const formLocked = isViewingSaved || isBusy
   const userLabel = profile?.name
@@ -350,7 +353,7 @@ function App() {
     })
   }
 
-  // 입력·결과·선택 상태를 비우고, 프로필 기본 정보로 새 사주를 시작합니다.
+  // 입력·결과·선택 상태를 모두 비우고 빈 사주 작성 화면으로 돌아갑니다.
   function handleNewSaju() {
     const alreadyOnNewPage = (
       !selectedId
@@ -360,6 +363,11 @@ function App() {
       && !result
       && !isLoading
       && !isTyping
+      && !name
+      && !birthDate
+      && !birthTime
+      && !gender
+      && !calendarType
     )
 
     if (alreadyOnNewPage) {
@@ -375,6 +383,11 @@ function App() {
 
     trackEvent('new_saju')
     setSelectedId(null)
+    setName('')
+    setBirthDate('')
+    setBirthTime('')
+    setGender('')
+    setCalendarType('')
     setResult('')
     setDisplayedResult('')
     setIsTyping(false)
@@ -385,7 +398,6 @@ function App() {
     setErrorMessage('')
     setShowFieldErrors(false)
     setRevealMode('type')
-    applyProfileToForm(profile)
     setStatusMessage('새 사주 작성 화면으로 이동했어요')
 
     requestAnimationFrame(() => {
@@ -404,7 +416,7 @@ function App() {
       id: user.id,
       name: form.name.trim(),
       birth_date: form.birthDate,
-      birth_time: form.birthTime,
+      birth_time: toStoredBirthTime(form.birthTime),
       gender: form.gender,
       calendar_type: form.calendarType,
       updated_at: new Date().toISOString(),
@@ -556,7 +568,7 @@ function App() {
         user_id: user.id,
         name,
         birth_date: birthDate,
-        birth_time: birthTime,
+        birth_time: toStoredBirthTime(birthTime),
         gender,
         calendar_type: calendarType,
         result: outputText,
@@ -585,7 +597,7 @@ function App() {
       .update({
         name,
         birth_date: birthDate,
-        birth_time: birthTime,
+        birth_time: toStoredBirthTime(birthTime),
         gender,
         calendar_type: calendarType,
         result: outputText,
@@ -614,7 +626,7 @@ function App() {
 
     if (!isFormComplete) {
       setShowFieldErrors(true)
-      setErrorMessage('이름, 생년월일, 태어난 시간, 성별, 양력/음력을 모두 입력해 주세요.')
+      setErrorMessage('이름, 생년월일, 성별, 양력/음력을 모두 입력해 주세요.')
       return
     }
 
@@ -626,7 +638,7 @@ function App() {
       .update({
         name,
         birth_date: birthDate,
-        birth_time: birthTime,
+        birth_time: toStoredBirthTime(birthTime),
         gender,
         calendar_type: calendarType,
       })
@@ -740,7 +752,7 @@ function App() {
 
     if (!isFormComplete) {
       setShowFieldErrors(true)
-      setErrorMessage('이름, 생년월일, 태어난 시간, 성별, 양력/음력을 모두 입력해 주세요.')
+      setErrorMessage('이름, 생년월일, 성별, 양력/음력을 모두 입력해 주세요.')
       return
     }
 
@@ -761,14 +773,12 @@ function App() {
     // 비어 있는 칸이 있으면 API를 부르지 않습니다.
     if (!isFormComplete) {
       setShowFieldErrors(true)
-      setErrorMessage('이름, 생년월일, 태어난 시간, 성별, 양력/음력을 모두 입력해 주세요.')
+      setErrorMessage('이름, 생년월일, 성별, 양력/음력을 모두 입력해 주세요.')
       const firstEmptyId = !name
         ? 'name'
         : !birthDate
           ? 'birthDate'
-          : !birthTime
-            ? 'birthTime'
-            : null
+          : null
       if (firstEmptyId) {
         document.getElementById(firstEmptyId)?.focus()
       }
@@ -784,14 +794,19 @@ function App() {
     const age = getKoreanAge(birthDate)
 
     // 사용자가 입력한 정보를 Gemini에게 보내는 본문입니다.
+    const birthTimeLabel = formatBirthTime(birthTime) || '모름'
     const userInput = `이름: ${name}
 성별: ${gender}
 나이: 만 ${age}세
 생년월일: ${birthDate}
-태어난 시간: ${birthTime}
+태어난 시간: ${birthTimeLabel}
 달력: ${calendarType}
 
-위 정보를 바탕으로 사주 기본 차트를 세우고 해석해 주세요.`
+위 정보를 바탕으로 사주 기본 차트를 세우고 해석해 주세요.${
+      birthTime
+        ? ''
+        : '\n태어난 시간을 모르므로 시주를 추정하지 말고, 년주·월주·일주만으로 해석해 주세요.'
+    }`
 
     const updateTargetId = isReinterpreting ? selectedId : null
     const askMode = updateTargetId ? 'reinterpret' : 'new'
@@ -890,10 +905,12 @@ function App() {
     return (
       <main className="page page-auth">
         <section className="sheet auth-sheet">
-          <header className="sheet-header">
+          <header className="sheet-header auth-header">
             <p className="sheet-eyebrow">四柱</p>
             <h1>사주미麗</h1>
-            <p className="sheet-lead">구글 계정으로 로그인하면 사주를 저장하고 다시 볼 수 있습니다</p>
+            <Ryeongi pose="login" />
+            <p className="sheet-lead">생년월일을 적으면 명식을 풀어 드립니다</p>
+            <p className="auth-sublead">구글 계정으로 로그인하면 사주를 저장하고 다시 볼 수 있습니다</p>
           </header>
           <button
             type="button"
@@ -901,6 +918,12 @@ function App() {
             onClick={handleGoogleLogin}
             disabled={authBusy}
           >
+            <svg className="google-login-icon" viewBox="0 0 18 18" aria-hidden="true">
+              <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62Z" />
+              <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.71H.96v2.33A9 9 0 0 0 9 18Z" />
+              <path fill="#FBBC05" d="M3.97 10.71A5.41 5.41 0 0 1 3.69 9c0-.59.1-1.17.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.04l3.01-2.33Z" />
+              <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58Z" />
+            </svg>
             {authBusy ? '구글로 이동 중...' : 'Google로 계속하기'}
           </button>
           {errorMessage && <p className="error">{errorMessage}</p>}
@@ -950,7 +973,7 @@ function App() {
                 <p className="auth-user-meta">
                   {[
                     formatDisplayDate(profile.birth_date),
-                    formatBirthTime(profile.birth_time),
+                    formatBirthTime(profile.birth_time) || '시간 모름',
                     profile.gender,
                     profile.calendar_type,
                   ]
@@ -1055,7 +1078,10 @@ function App() {
       <section className={`sheet${isViewingSaved ? ' is-viewing' : ''}`}>
         <header className="sheet-header">
           <p className="sheet-eyebrow">四柱</p>
-          <h1>사주미麗</h1>
+          <div className="sheet-title-row">
+            <h1>사주미麗</h1>
+            <Ryeongi pose="title" />
+          </div>
           <p className="sheet-lead">
             {isViewingSaved
               ? '저장된 명식을 보고 있습니다'
@@ -1162,8 +1188,8 @@ function App() {
             />
           </div>
 
-          <div className={fieldClass(birthTime)}>
-            <label className="field-label" htmlFor="birthTime">태어난 시간</label>
+          <div className="field">
+            <label className="field-label" htmlFor="birthTime">태어난 시간 (선택)</label>
             <input
               id="birthTime"
               type="time"
@@ -1174,6 +1200,7 @@ function App() {
               }}
               disabled={formLocked}
             />
+            <p className="field-hint">모르면 비워 두세요. 시주 없이 해석합니다.</p>
           </div>
 
           <div className={fieldClass(gender)}>
@@ -1268,10 +1295,7 @@ function App() {
         {/* 해석 중에는 결과 자리에 스켈레톤을 보여 줍니다. */}
         {isLoading && (
           <div className="result result-skeleton" aria-busy="true" aria-live="polite">
-            <div className="skeleton-line skeleton-heading" />
-            <div className="skeleton-line skeleton-body" />
-            <div className="skeleton-line skeleton-body" />
-            <div className="skeleton-line skeleton-body short" />
+            <Ryeongi pose="loading" />
             <div className="skeleton-line skeleton-heading" />
             <div className="skeleton-line skeleton-body" />
             <div className="skeleton-line skeleton-body" />

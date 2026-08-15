@@ -1,4 +1,5 @@
 import { formatBirthTime, formatDisplayDate } from './sajuFormat'
+import Ryeongi from './Ryeongi'
 
 function renderSajuResult(text, showCursor = false) {
   const lines = text.split('\n')
@@ -62,6 +63,7 @@ function SajuResultCard({
       id={cardId}
       className={`result${revealInstant || !isTyping ? ' result-instant' : ''}`}
     >
+      <Ryeongi pose="result" />
       <div className="result-meta">
         <div className="result-meta-row">
           <div>
@@ -69,7 +71,7 @@ function SajuResultCard({
             <p className="result-meta-detail">
               {[
                 formatDisplayDate(birthDate),
-                formatBirthTime(birthTime),
+                formatBirthTime(birthTime) || '시간 모름',
                 gender,
                 calendarType,
               ]

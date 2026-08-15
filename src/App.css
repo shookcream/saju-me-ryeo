@@ -15,7 +15,22 @@
   width: min(420px, 100%);
 }
 
+.auth-header {
+  margin-bottom: 22px;
+}
+
+.auth-sublead {
+  margin: 8px 0 0;
+  color: #8a7d6b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .google-login {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   width: 100%;
   height: 50px;
   border: 1px solid #2a241c;
@@ -26,6 +41,12 @@
   cursor: pointer;
 }
 
+.google-login-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
 .google-login:hover:not(:disabled) {
   background-color: #2a241c;
   color: #f7f1e6;
@@ -34,6 +55,80 @@
 .google-login:disabled {
   opacity: 0.65;
   cursor: wait;
+}
+
+.ryeongi-stage {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.ryeongi {
+  display: block;
+  height: auto;
+}
+
+.ryeongi-stage--login {
+  margin: 14px auto 6px;
+}
+
+.ryeongi-stage--login .ryeongi {
+  width: min(260px, 78%);
+}
+
+.ryeongi-stage--loading,
+.ryeongi-stage--result,
+.ryeongi-stage--missing {
+  margin: 0 auto 8px;
+}
+
+.ryeongi-stage--loading {
+  width: min(200px, 70%);
+  animation: ryeongi-bob 2.2s ease-in-out infinite;
+}
+
+.ryeongi-stage--loading .ryeongi {
+  width: 100%;
+}
+
+.ryeongi-stage--result {
+  width: min(220px, 68%);
+  margin-bottom: 16px;
+}
+
+.ryeongi-stage--result .ryeongi {
+  width: 100%;
+}
+
+.ryeongi-stage--missing {
+  width: min(180px, 62%);
+  margin: 4px auto 16px;
+}
+
+.ryeongi-stage--missing .ryeongi {
+  width: 100%;
+}
+
+.ryeongi-stage--title {
+  position: absolute;
+  top: -100px;
+  right: -120px;
+  width: 136px;
+  margin: 0;
+}
+
+.ryeongi-stage--title .ryeongi {
+  width: 100%;
+}
+
+@keyframes ryeongi-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
 }
 
 .auth-card {
@@ -397,6 +492,14 @@
   letter-spacing: 0.18em;
 }
 
+.sheet-title-row {
+  position: relative;
+  display: inline-block;
+  margin-top: 42px;
+  padding-right: 44px;
+  transform: translateX(24px);
+}
+
 .sheet-lead {
   margin: 10px 0 0;
   color: #6b6256;
@@ -503,6 +606,13 @@
   color: #3d362c;
   font-size: 14px;
   font-weight: 500;
+}
+
+.field-hint {
+  margin: 0;
+  color: #8a7d6b;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .field input[type='text'],
@@ -929,5 +1039,16 @@
 
   .sheet-header h1 {
     font-size: 26px;
+  }
+
+  .ryeongi-stage--title {
+    top: -52px;
+    right: -108px;
+    width: 112px;
+  }
+
+  .sheet-title-row {
+    margin-top: 26px;
+    padding-right: 56px;
   }
 }
