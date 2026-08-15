@@ -138,6 +138,31 @@
   background-color: #f3ebe0;
 }
 
+.auth-card-guest {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-guest-title {
+  margin: 0;
+  color: #2a241c;
+  font-family: 'Noto Serif KR', serif;
+  font-size: 15px;
+}
+
+.auth-guest-copy {
+  margin: 0;
+  color: #6b6256;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.google-login-compact {
+  height: 44px;
+  font-size: 13px;
+}
+
 .auth-user {
   display: flex;
   align-items: center;

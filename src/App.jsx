@@ -45,6 +45,43 @@ function closeTimePickerIfComplete(event) {
   }
 }
 
+const PENDING_SAVE_KEY = 'saju-pending-save'
+// OAuth 리다이렉트·StrictMode 중복 실행에도 같은 초안을 한 번만 처리합니다.
+let bootPendingDraft = undefined
+let pendingAutoSaveStarted = false
+
+function persistPendingDraft(draft) {
+  try {
+    sessionStorage.setItem(PENDING_SAVE_KEY, JSON.stringify(draft))
+  } catch {
+    // 저장 공간이 없어도 로그인은 진행합니다.
+  }
+}
+
+function takeBootPendingDraft() {
+  if (bootPendingDraft !== undefined) return bootPendingDraft
+  try {
+    const raw = sessionStorage.getItem(PENDING_SAVE_KEY)
+    bootPendingDraft = raw ? JSON.parse(raw) : null
+    if (raw) sessionStorage.removeItem(PENDING_SAVE_KEY)
+  } catch {
+    bootPendingDraft = null
+    sessionStorage.removeItem(PENDING_SAVE_KEY)
+  }
+  return bootPendingDraft
+}
+
+function GoogleIcon() {
+  return (
+    <svg className="google-login-icon" viewBox="0 0 18 18" aria-hidden="true">
+      <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62Z" />
+      <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.71H.96v2.33A9 9 0 0 0 9 18Z" />
+      <path fill="#FBBC05" d="M3.97 10.71A5.41 5.41 0 0 1 3.69 9c0-.59.1-1.17.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.04l3.01-2.33Z" />
+      <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58Z" />
+    </svg>
+  )
+}
+
 function App() {
   // name: 사용자가 입력한 이름을 저장하는 상태
   // setName: name 값을 바꿔 주는 함수
@@ -91,13 +128,12 @@ function App() {
     || user?.email
     || '사용자'
   const userAvatar = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || ''
-  const needsProfileSetup = Boolean(user) && !profileLoading && !profile
   const profileFormValues = {
-    name: profile?.name || '',
-    birthDate: profile?.birth_date || '',
-    birthTime: formatBirthTime(profile?.birth_time),
-    gender: profile?.gender || '',
-    calendarType: profile?.calendar_type || '',
+    name: profile?.name || name || '',
+    birthDate: profile?.birth_date || birthDate || '',
+    birthTime: formatBirthTime(profile?.birth_time || birthTime),
+    gender: profile?.gender || gender || '',
+    calendarType: profile?.calendar_type || calendarType || '',
   }
   const submitLabel = isLoading
     ? '해석 중...'
@@ -108,9 +144,11 @@ function App() {
         : '사주 해석하기'
   const saveLabel = isSaving
     ? '저장 중...'
-    : isReinterpreting
-      ? '수정 내용 저장하기'
-      : '저장하기'
+    : !user
+      ? '로그인하고 저장하기'
+      : isReinterpreting
+        ? '수정 내용 저장하기'
+        : '저장하기'
   const canSaveResult = Boolean(result) && isUnsaved && !isLoading && !isEditing && !isTyping
   const canShareResult = Boolean(result) && !isLoading && !isTyping && (Boolean(selectedId) || canSaveResult)
 
@@ -169,7 +207,7 @@ function App() {
     setCalendarType(nextProfile.calendar_type || '')
   }
 
-  async function loadProfile(userId) {
+  async function loadProfile(userId, { skipApplyForm = false } = {}) {
     setProfileLoading(true)
     const { data, error } = await supabase
       .from('users')
@@ -187,12 +225,40 @@ function App() {
     setProfile(data)
 
     if (!data) {
-      setProfileModal('setup')
       return null
     }
 
-    applyProfileToForm(data)
+    if (!skipApplyForm) {
+      applyProfileToForm(data)
+    }
     setProfileModal((current) => (current === 'setup' ? null : current))
+    return data
+  }
+
+  async function ensureProfileFromDraft(userId, draft) {
+    const payload = {
+      id: userId,
+      name: String(draft.name || '').trim(),
+      birth_date: draft.birthDate,
+      birth_time: toStoredBirthTime(draft.birthTime),
+      gender: draft.gender,
+      calendar_type: draft.calendarType,
+      updated_at: new Date().toISOString(),
+    }
+
+    const { data, error } = await supabase
+      .from('users')
+      .upsert(payload, { onConflict: 'id' })
+      .select('id, name, birth_date, birth_time, gender, calendar_type, created_at, updated_at')
+      .single()
+
+    if (error) {
+      setErrorMessage(`프로필 저장에 실패했습니다: ${error.message}`)
+      return null
+    }
+
+    setProfile(data)
+    setProfileModal(null)
     return data
   }
 
@@ -211,13 +277,69 @@ function App() {
     let cancelled = false
 
     ;(async () => {
-      const loadedProfile = await loadProfile(user.id)
+      const pending = takeBootPendingDraft()
+
+      if (pending?.result) {
+        setName(pending.name || '')
+        setBirthDate(pending.birthDate || '')
+        setBirthTime(formatBirthTime(pending.birthTime))
+        setGender(pending.gender || '')
+        setCalendarType(pending.calendarType || '')
+        setResult(pending.result)
+        setDisplayedResult(pending.result)
+        setIsTyping(false)
+        setIsUnsaved(true)
+        setSelectedId(null)
+        setIsEditing(false)
+        setIsReinterpreting(false)
+        setRevealMode('instant')
+        setShowFieldErrors(false)
+        setErrorMessage('')
+      }
+
+      let loadedProfile = await loadProfile(user.id, { skipApplyForm: Boolean(pending?.result) })
       if (cancelled) return
+
+      if (!loadedProfile && pending?.result) {
+        loadedProfile = await ensureProfileFromDraft(user.id, pending)
+        if (cancelled) return
+      }
+
       if (loadedProfile) {
         await loadReadings()
       } else {
         setReadings([])
         setIsHistoryLoading(false)
+        if (!pending?.result) {
+          setProfileModal('setup')
+        }
+      }
+
+      if (!pending?.result || pendingAutoSaveStarted) return
+      pendingAutoSaveStarted = true
+
+      setIsSaving(true)
+      const saved = await createReading(pending.result, pending)
+      if (cancelled) return
+      setIsSaving(false)
+
+      if (saved) {
+        trackEvent('save_reading', { mode: 'create', via: 'login' })
+        setStatusMessage('로그인되어 사주가 저장되었습니다')
+
+        if (!loadedProfile) {
+          setProfileModal('setup')
+        }
+
+        if (pending.intent === 'share') {
+          const outcome = await shareReading({ id: saved.id, name: pending.name })
+          trackEvent('share', { method: outcome, context: 'app', via: 'login' })
+          if (outcome === 'copied') {
+            setStatusMessage('저장 후 공유 링크를 복사했습니다')
+          } else if (outcome === 'failed') {
+            setErrorMessage('링크를 복사하지 못했습니다. 잠시 후 다시 시도해 주세요.')
+          }
+        }
       }
     })()
 
@@ -448,8 +570,20 @@ function App() {
   }
 
   // Google OAuth로 로그인합니다. Supabase 대시보드에 등록된 redirect URL로 돌아옵니다.
-  async function handleGoogleLogin() {
-    trackEvent('login_click', { method: 'google' })
+  async function handleGoogleLogin(intent = 'save') {
+    if (result && isUnsaved) {
+      persistPendingDraft({
+        name,
+        birthDate,
+        birthTime,
+        gender,
+        calendarType,
+        result,
+        intent,
+      })
+    }
+
+    trackEvent('login_click', { method: 'google', intent })
     setAuthBusy(true)
     setErrorMessage('')
 
@@ -556,21 +690,27 @@ function App() {
   }
 
   // Create: 새 사주 기록을 추가합니다.
-  async function createReading(outputText) {
+  async function createReading(outputText, fields = null) {
     if (!user?.id) {
       setErrorMessage('로그인이 필요합니다. 구글로 로그인해 주세요.')
       return null
     }
 
+    const nextName = fields?.name ?? name
+    const nextBirthDate = fields?.birthDate ?? birthDate
+    const nextBirthTime = fields?.birthTime ?? birthTime
+    const nextGender = fields?.gender ?? gender
+    const nextCalendarType = fields?.calendarType ?? calendarType
+
     const { data, error } = await supabase
       .from('saju_readings')
       .insert({
         user_id: user.id,
-        name,
-        birth_date: birthDate,
-        birth_time: toStoredBirthTime(birthTime),
-        gender,
-        calendar_type: calendarType,
+        name: nextName,
+        birth_date: nextBirthDate,
+        birth_time: toStoredBirthTime(nextBirthTime),
+        gender: nextGender,
+        calendar_type: nextCalendarType,
         result: outputText,
       })
       .select('id, name, birth_date, birth_time, gender, calendar_type, result, created_at')
@@ -581,7 +721,7 @@ function App() {
       return null
     }
 
-    setReadings((prev) => [data, ...prev])
+    setReadings((prev) => [data, ...prev.filter((item) => item.id !== data.id)])
     setSelectedId(data.id)
     setIsEditing(false)
     setIsReinterpreting(false)
@@ -719,6 +859,17 @@ function App() {
   async function handleShareReading() {
     if (!canShareResult) return
 
+    if (!user) {
+      if (!isFormComplete) {
+        setShowFieldErrors(true)
+        setErrorMessage('이름, 생년월일, 성별, 양력/음력을 모두 입력해 주세요.')
+        return
+      }
+      setStatusMessage('공유하려면 구글 로그인이 필요합니다')
+      await handleGoogleLogin('share')
+      return
+    }
+
     let readingId = selectedId
 
     if (canSaveResult) {
@@ -753,6 +904,12 @@ function App() {
     if (!isFormComplete) {
       setShowFieldErrors(true)
       setErrorMessage('이름, 생년월일, 성별, 양력/음력을 모두 입력해 주세요.')
+      return
+    }
+
+    if (!user) {
+      setStatusMessage('저장하려면 구글 로그인이 필요합니다')
+      await handleGoogleLogin('save')
       return
     }
 
@@ -889,61 +1046,6 @@ function App() {
     handleAskSaju()
   }
 
-  if (authLoading) {
-    return (
-      <main className="page page-auth">
-        <section className="sheet auth-sheet">
-          <p className="sheet-eyebrow">四柱</p>
-          <h1>사주미麗</h1>
-          <p className="sheet-lead">로그인 상태를 확인하는 중...</p>
-        </section>
-      </main>
-    )
-  }
-
-  if (!user) {
-    return (
-      <main className="page page-auth">
-        <section className="sheet auth-sheet">
-          <header className="sheet-header auth-header">
-            <p className="sheet-eyebrow">四柱</p>
-            <h1>사주미麗</h1>
-            <Ryeongi pose="login" />
-            <p className="sheet-lead">생년월일을 적으면 명식을 풀어 드립니다</p>
-            <p className="auth-sublead">구글 계정으로 로그인하면 사주를 저장하고 다시 볼 수 있습니다</p>
-          </header>
-          <button
-            type="button"
-            className="google-login"
-            onClick={handleGoogleLogin}
-            disabled={authBusy}
-          >
-            <svg className="google-login-icon" viewBox="0 0 18 18" aria-hidden="true">
-              <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62Z" />
-              <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.71H.96v2.33A9 9 0 0 0 9 18Z" />
-              <path fill="#FBBC05" d="M3.97 10.71A5.41 5.41 0 0 1 3.69 9c0-.59.1-1.17.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.04l3.01-2.33Z" />
-              <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58Z" />
-            </svg>
-            {authBusy ? '구글로 이동 중...' : 'Google로 계속하기'}
-          </button>
-          {errorMessage && <p className="error">{errorMessage}</p>}
-        </section>
-      </main>
-    )
-  }
-
-  if (profileLoading && !profile) {
-    return (
-      <main className="page page-auth">
-        <section className="sheet auth-sheet">
-          <p className="sheet-eyebrow">四柱</p>
-          <h1>사주미麗</h1>
-          <p className="sheet-lead">프로필을 불러오는 중...</p>
-        </section>
-      </main>
-    )
-  }
-
   return (
     <main className="page">
       {statusMessage && (
@@ -957,59 +1059,77 @@ function App() {
       )}
 
       <aside className="history-sidebar" aria-label="저장된 사주 목록">
-        <div className="auth-card">
-          <div className="auth-user">
-            {userAvatar ? (
-              <img className="auth-avatar" src={userAvatar} alt="" referrerPolicy="no-referrer" />
-            ) : (
-              <span className="auth-avatar auth-avatar-fallback" aria-hidden="true">
-                {userLabel.slice(0, 1)}
-              </span>
-            )}
-            <div className="auth-user-text">
-              <p className="auth-user-label">내 프로필</p>
-              <p className="auth-user-name">{userLabel}</p>
-              {profile && (
-                <p className="auth-user-meta">
-                  {[
-                    formatDisplayDate(profile.birth_date),
-                    formatBirthTime(profile.birth_time) || '시간 모름',
-                    profile.gender,
-                    profile.calendar_type,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </p>
+        {user ? (
+          <div className="auth-card">
+            <div className="auth-user">
+              {userAvatar ? (
+                <img className="auth-avatar" src={userAvatar} alt="" referrerPolicy="no-referrer" />
+              ) : (
+                <span className="auth-avatar auth-avatar-fallback" aria-hidden="true">
+                  {userLabel.slice(0, 1)}
+                </span>
               )}
+              <div className="auth-user-text">
+                <p className="auth-user-label">내 프로필</p>
+                <p className="auth-user-name">{userLabel}</p>
+                {profile && (
+                  <p className="auth-user-meta">
+                    {[
+                      formatDisplayDate(profile.birth_date),
+                      formatBirthTime(profile.birth_time) || '시간 모름',
+                      profile.gender,
+                      profile.calendar_type,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="auth-card-actions">
+              <button
+                type="button"
+                className="auth-profile-edit"
+                onClick={() => {
+                  setProfileError('')
+                  setProfileModal('edit')
+                }}
+                disabled={isBusy || profileLoading || !profile}
+              >
+                프로필 수정
+              </button>
+              <button
+                type="button"
+                className="auth-logout"
+                onClick={handleLogout}
+                disabled={authBusy}
+              >
+                로그아웃
+              </button>
             </div>
           </div>
-          <div className="auth-card-actions">
+        ) : (
+          <div className="auth-card auth-card-guest">
+            <p className="auth-guest-title">저장이 필요할 때 로그인</p>
+            <p className="auth-guest-copy">
+              로그인 없이 사주를 볼 수 있어요. 결과를 보관하려면 구글 로그인을 해 주세요.
+            </p>
             <button
               type="button"
-              className="auth-profile-edit"
-              onClick={() => {
-                setProfileError('')
-                setProfileModal('edit')
-              }}
-              disabled={isBusy || profileLoading || !profile}
+              className="google-login google-login-compact"
+              onClick={() => handleGoogleLogin('save')}
+              disabled={authBusy || authLoading}
             >
-              프로필 수정
-            </button>
-            <button
-              type="button"
-              className="auth-logout"
-              onClick={handleLogout}
-              disabled={authBusy}
-            >
-              로그아웃
+              <GoogleIcon />
+              {authBusy ? '구글로 이동 중...' : 'Google로 로그인'}
             </button>
           </div>
-        </div>
+        )}
 
         <p className="history-eyebrow">記錄</p>
         <div className="history-heading-row">
           <h2 className="history-title">저장된 사주</h2>
-          {!isHistoryLoading && readings.length > 0 && (
+          {user && !isHistoryLoading && readings.length > 0 && (
             <span className="history-count">{readings.length}</span>
           )}
         </div>
@@ -1021,7 +1141,9 @@ function App() {
         >
           새 사주 만들기
         </button>
-        {isHistoryLoading ? (
+        {!user ? (
+          <p className="history-empty">로그인하면 저장한 사주를 여기서 볼 수 있습니다</p>
+        ) : isHistoryLoading || (profileLoading && !profile) ? (
           <p className="history-empty">목록을 불러오는 중...</p>
         ) : readings.length === 0 ? (
           <p className="history-empty">아직 저장된 사주가 없습니다</p>
@@ -1339,7 +1461,7 @@ function App() {
       </section>
 
       <ProfileModal
-        open={profileModal === 'setup' || profileModal === 'edit' || needsProfileSetup}
+        open={profileModal === 'setup' || profileModal === 'edit'}
         mode={profileModal === 'edit' ? 'edit' : 'setup'}
         initialValues={profileFormValues}
         isSaving={isSavingProfile}
